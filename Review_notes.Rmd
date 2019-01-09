@@ -1,7 +1,9 @@
 ---
 title: "STAT 184 Review"
 author: "Matthew Beckman"
-output: 
+output:
+  html_document:
+    df_print: paged
   html_notebook: default
   slidy_presentation: default
 ---
