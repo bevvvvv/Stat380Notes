@@ -1,0 +1,546 @@
+---
+title: "STAT 184 Review"
+author: "Matthew Beckman"
+output: 
+  html_notebook: default
+  slidy_presentation: default
+---
+
+```{r include=FALSE}
+# Frontmatter
+rm(list = ls())  # clean-up
+
+# packages
+library(babynames)
+library(DataComputing)
+library(ggthemes)
+library(Hmisc)
+library(mdsr)
+library(mosaic)
+library(tidyverse)
+
+# inputs & outputs
+
+## `Galton`     from mosaicData package 
+## `BabyNames`  from DataComputing package
+## `Stocks`     simulated data
+## `SAT_2010`   from mdsr package
+## `babynames`  from babynames package
+## `MedicareCharges` from mdsr
+```
+
+
+## Agenda
+
+- revisit reproducible workflow
+- some review of STAT 184 topics
+
+#### Homework 
+
+- (late) Generic R Notebook
+- (late) GitHub Startup
+- (friday) Programming Notebooks: MDSR Chapter 04
+- (sunday) Programming Notebooks: MDSR Chapter 03
+- (next week) MDSR Chap 3 Exercises
+- (next week) Programming Notebooks: MDSR Chapter 05
+
+## STAT 380 workflow
+
+- Reproducible Research
+    - Git(Hub) source control basics
+    - RStudio IDE (R, Rmd, Git)
+
+
+## Git / GitHub
+
+- GitHub's Intro: <https://guides.github.com/activities/hello-world/>
+- "GitHub is a code hosting platform for version control and collaboration. It lets you and others work together on projects from anywhere." 
+- **Repositories** are used to organize each project
+    - These can contain documents, images, folders, code, data, ... basically everything you need for your project 
+    - Larger files (> 10-15 MB) need some special handling, but usually not a big deal
+    - You'll soon link each **GitHub Repository** to an **RStudio Project** to streamline the workflow
+    - Don't put repositories inside other repositories
+- Most of your workflow is unchanged
+    - As far as your computer is concerned, the repository works just like any other directory (i.e. folder)
+    - You edit files, save changes, etc
+
+![Dr. Beckman's Directory to Organize GitHub Repositories](GitHub Directory.png)
+
+
+## Git / GitHub
+
+- First new part: (**commit**) changes
+    - ideally, each commit should encompass *one meaningful modification* 
+    - creates a permanent snapshot of the repository
+    - you can revisit these snapshots at any time... 
+- Second new part: (**push/pull**) to remote
+    - GitHub stores the state of your repository in the cloud
+    - When you *push*, you update the remote version 
+    - Anyone with access to your GitHub repository can *pull* the remote version and work with it
+        - This might be you, using a different computer
+        - It might be a collaborator 
+        - It might be a professor or TA
+        - If the repo is made public, it might be a complete stranger!
+    - The collaborator can then commit changes and push them to the remote as well 
+        - don't worry, there are safeguards in place based on user permissions
+
+
+![Git Schematic: http://www.tsbakker.nl/git.html](gitstages.jpg)
+
+## Git / GitHub
+
+- Once configured, nearly all of the action can happen in RStudio
+- A "Git" tab will appear in RStudio
+- Diff, Commit, Pull, Push are most common actions
+
+
+![](GitHub Directory RStudio.png)
+
+
+
+
+## Markdown / R Markdown
+
+- Human-readable syntax by design
+- Can "knit" (or preview) same .Rmd to HTML (or PDF or MS Word with some configuration)
+- Can produce both notebook, slides, document, webpage, etc as output.
+- **Regardless** of intended output, Rmd documents generally require two parts
+    - "yaml" header at the top (designated by `---` before/after) includes some document controls
+        - title
+        - author
+        - date
+        - output
+        - (etc)
+    - body of the document including components such as:  
+        - Markdown syntax (like hashtag headers)
+        - Narrative text
+        - Lists (bullets or numbers)
+        - Code "chunks" (R, python, SQL, Stan, etc embedded among the narrative of the document)
+        - URLs
+        - Images
+        - Tables
+        - and much more...
+
+
+## Why RMarkdown?
+
+#### RMarkdown lets us separate content from formatting
+
+- Alternative to WYSIWYG's like MS Word & Google Docs 
+- Easy to configure headings, lists, TOC, figures, captions, links, images, etc
+- Change formatting globally with a css (cascading style sheet)
+- Good-looking tables are easy
+- Typeset nice-looking mathematics using LaTeX (and some preview)
+
+#### STAT 501 excerpt (inline math)...
+
+Here's the model: 
+
+$log(\frac{\hat{p}_i}{1-\hat{p}_i}) = 3.309 - 0.288(dist_i)$
+
+where $\hat{p}_i$ is the proportion that voted "Yes" for community *i*.
+
+
+Since the relationship on a logarithmic scale is hard to interpret, we back transform before interpreting coefficients. 
+
+Note: If $e^{\beta_1} = 1$, then it means the odds are 1:1 which translates to a 50-50 chance and means there would be no relationship between the explanatory variable and the odds of "success" (however that's defined in the context of the study).  
+
+#### STAT 501 excerpt (aligned to `=` sign)...
+
+\begin{align*}
+
+\mathit{SSE} &= \Sigma_{i} \left( y_{i} - b_{0} - b_{1}x_{i} \right)^2 \\
+
+\\
+
+\frac{\partial \left( SSE \right)}{\partial b_{0}} &= \Sigma_{i} \left( y_{i} - b_{0} - b_{1}x_{i} \right)^2 \\
+ &= \left( -2 \right) \Sigma_{i} \left( y_{i} - b_{0} - b_{1}x_{i} \right) \\
+ &= \left( -2 \right) \left( \Sigma y_{i} - \Sigma b_{0} - \Sigma b_{1}x_{i} \right) \\
+
+\\
+
+\frac{\partial \left( SSE \right)}{\partial b_{1}} &= \Sigma_{i} \left( y_{i} - b_{0} - b_{1}x_{i} \right)^2 \\
+ &= \Sigma_{i} \left( -2x_{i} \right) \left( y_{i} - b_{0} - b_{1}x_{i} \right) \\
+ &= \left( -2\right) \Sigma_{i} \left( x_{i} y_{i} - x_{i} b_{0} - b_{1}x_{i}^2 \right) \\
+ &= \left( -2\right) \left( \Sigma x_{i} y_{i} - \Sigma x_{i} b_{0} - \Sigma b_{1}x_{i}^2 \right) \\
+
+\end{align*}
+
+
+## (my) STAT 184 Philosophy
+
+- "less-volume, more creativity"  
+- A few simple tools can be combined in powerful ways
+- Individually these tools are introduced as "data moves" 
+- The complexity comes from combining these simple tools in order to achieve our specific purposes
+- `tidyverse` sub-language accomplishes this purpose within an ecosystem predicated upon so-called "Tidy" data.
+
+Individual lego bricks are simple.^[Source : "Lego Color Bricks" by Alan Chia - Lego Color Bricks. Licensed under CC BY-SA 2.0 via [Wikimedia Commons](http://commons.wikimedia.org/wiki/File:Lego_Color_Bricks.jpg#mediaviewer/File:Lego_Color_Bricks.jpg)]  | A complex model made of lego bricks ^[Source: *Trafalgar Legoland 2003* by Kaihsu Tai - Kaihsu Tai. Licensed under CC BY-SA 3.0 via [Wikimedia Commons](http://commons.wikimedia.org/wiki/File:Trafalgar_Legoland_2003.jpg#mediaviewer/File:Trafalgar_Legoland_2003.jpg)]|
+----------------------------- | -----------------------------  |
+![Bricks](Lego_Color_Bricks.jpg)| ![Trafalgar Legoland](Trafalgar_Legoland_2003.jpg) |
+
+
+## Tidy Data
+
+- "Neat" is not the same as "Tidy"
+- *Tidy data* are organized according to two simple rules: 
+    1. The rows--called *cases* or observational units--each refer to a specific, unique, and similar sort of thing
+    2. The columns, called *variables*, each have the same sort of value recorded for each case (i.e. row)
+- Galton's family data
+    - Are these data tidy?
+    - What is a case?
+    - What are the variables?
+
+![A page from Francis Galton's notebook.](galton-notebook.jpg)
+
+
+```{r eval=FALSE, echo=TRUE}
+# package
+require(mosaicData)  
+
+# intake data from `mosaicData` package
+data("Galton")
+
+head(Galton, 10)
+```
+
+## `tidyverse` command chains
+
+- Each link in the chain is a "data verb" or "data move"  with its arguments
+    - The very first link is typically a data table.
+    - Links are connected by the pipe: `%>%`
+- Often, but not always, you will store the result of the chain in a named object
+    - This is done with the *assignment operator*, `<-`
+- New line for each link
+- Note that `%>%` is at the end of each line.  **Except**
+    - `Hazels <-` is an assignment
+    - Last line has no `%>%` (otherwise R thinks there's more)
+
+
+```{r}
+# package
+require(DataComputing)
+
+# intake data
+data("BabyNames")
+
+# a command chain
+Hazels <- 
+  BabyNames %>%
+  filter(grepl("Hazel", name)) %>%
+  group_by(year) %>%
+  summarise(total = sum(count))
+```
+
+## Parts of speech
+
+- Data set
+- function
+- argument
+- variables
+- constants
+
+#### Discussion question
+
+```{r eval=FALSE}
+Hazels <- 
+  BabyNames %>%
+  filter(grepl("Hazel", name)) %>%
+  group_by(year) %>%
+  summarise(total = sum(count))
+```
+
+Just from the syntax, you should be able to tell which of the five different kinds of object each of these things is: 
+
+- `Hazels` 
+- `BabyNames` 
+- `filter` 
+- `grepl` 
+- `"Hazel"` 
+- `name` 
+- `group_by` 
+- `year` 
+- `summarise` 
+- `total` 
+- `sum` 
+- `count`
+
+
+## Small group discussion: 
+
+- Explain each of these common `tidyverse` functions:
+    - **List 1--data joins & reshape:**
+        - `left_join()`
+        - `inner_join()`
+        - `spread()`
+        - `gather()`
+    - **List 2--data verbs:**
+        - `mutate()`
+        - `filter()`
+        - `select()`
+        - `arrange()`
+    - **List 3--more data verbs:**
+        - `head()` & `tail()`
+        - `transmute()`
+        - `rename()`
+        - `sample_n()`
+        - `summarise()` & `group_by()`
+    - **List 4--summary functions:**
+        - `glimpse()`
+        - `str()`
+        - `summary()`
+        - `nrow()` & `ncol()`
+        - `names()`
+        - `View()`
+- Are there functions that no one in the group understood?
+
+
+
+## Kinds of join
+
+
+Different joins have different answers to these questions.
+
+* What to do when there is **no match** between a left case and any right case?
+* What to do when there are **multiple matching cases** in the right table for a case in the left table?
+
+
+Popular join types: 
+
+- `left_join()`: joins matching rows from the *right* table to the *left* table
+- `inner_join()`: only retain rows for which a match exists
+
+<br>
+
+#### IF no right cases match the left case...
+
+- `left_join()`: Keep the left case and fill in the new variables (from the right table) with `NA`
+- `inner_join()`: Discard the left case.
+
+<br>
+
+#### IF multiple right cases match the left case...
+
+`left_join()` and `inner_join()` do the same thing:
+
+* `left_join()`: Keep **all combinations**.
+* `inner_join()`: Keep **all combinations**.
+
+<br>
+
+#### Other useful joins:
+
+* `full_join()` Keep left case as well as unmatched right cases.
+* `semi_join()` Discard left case corresponding to unmatched right case.
+* `anti_join()` Keep the left case but discard any left case with a match in the right table
+
+
+## Reshaping data
+
+- `gather()` stacks columns to convert from wide to narrow
+- `spread()` unstacks columns to convert narrow to wide
+
+
+```{r}
+require(dplyr)
+# From http://stackoverflow.com/questions/1181060
+Stocks <- tibble(
+  time = as.Date('2009-01-01') + 0:9,
+  X = rnorm(10, 0, 1),
+  Y = rnorm(10, 0, 2),
+  Z = rnorm(10, 0, 4)
+)
+
+# inspect data
+Stocks
+
+# gather/stack/melt--wide to narrow
+StocksNarrow <- 
+  Stocks %>% 
+  gather(key = stock, value = price, X, Y, Z)  
+
+StocksNarrow 
+
+# spread/unstack/cast--narrow to wide
+StocksWide <- 
+  StocksNarrow %>% 
+  spread(key = stock, value = price)
+
+StocksWide
+```
+
+
+
+## Grammar of graphics
+
+- the framework underpinning `ggplot2` intends to implement priniciples and philosophy set in Wilkonson's 2005 book *The Grammer of Graphics (2nd Ed.)*
+- using tidy data, each *case* corresponds to a *glpyh* or mark on the graph.
+
+![](grammarGraphics.png)
+
+#### SAT Scores & Student Spending by State in the US
+
+```{r}
+require(mdsr)
+data("SAT_2010")
+
+# 2010 SAT Scores grouped by participation rate
+SAT_2010 <- 
+  SAT_2010 %>%
+  mutate(SAT_rate = cut(sat_pct, breaks = c(0, 30, 60, 100), 
+                        labels = c("low", "medium", "high")))
+
+# initialize scatter plot
+g <- 
+  SAT_2010 %>%
+  ggplot(aes(x = expenditure, y = math)) + 
+  geom_point() + 
+  geom_smooth(method = "lm", se = 0) + 
+  xlab("Average expenditure per student ($1000)") + 
+  ylab("Average score on math SAT")
+
+# base plot showing SAT Math vs Student expenditure
+g
+```
+
+```{r}
+# color scatter plot by SAT_rate
+g + 
+  aes(color = SAT_rate)
+```
+
+
+#### Anatomy of a data visualization
+
+- Frame
+- Glyph
+- Aesthetic
+- Scale
+- Guide (legend)
+- Facet
+
+
+```{r}
+# facet by SAT participation rate
+g + 
+  facet_wrap( ~ SAT_rate)
+```
+
+
+## Layers 
+
+#### Medicare costs in Pennsylvania among other states
+
+```{r}
+require(mdsr)
+data("MedicareCharges", package = "mdsr")   # from mdsr, not DataComputing
+
+# Pennsylvania medicare charges
+ChargesPA <- 
+  MedicareCharges %>%
+  filter(stateProvider == "PA")
+```
+
+```{r fig.height=3, fig.width=8}
+# Plot Pennsylvania data
+p <- 
+  ChargesPA %>%
+  ggplot(aes(x = reorder(drg, mean_charge), y = mean_charge)) + 
+  geom_bar(fill = "gray", stat = "identity") +   # stat = "identity" ==> value dictates bar height
+  ylab("Statewide Average Charges ($)") + 
+  xlab("Medical Procedure (DRG)") + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+p
+```
+
+
+```{r fig.height=3, fig.width=8}
+# add layer to show other states for reference
+p + 
+  geom_point(data = MedicareCharges, size = 1, alpha = 0.3)
+```
+
+
+## Fivethirtyeight reproduction (MDSR p. 50)
+
+![](josephsFivethirtyeight.png)
+
+## MDSR Reproduction
+
+```{r}
+require(mdsr)
+require(Hmisc)
+
+BabynamesDist <- make_babynames_dist()  # from mdsr
+
+Joseph <- BabynamesDist %>%
+  filter(name == "Joseph" & sex == "M")
+
+# constructing the base plot
+name_plot <- 
+  Joseph %>%
+  ggplot(aes(x = year)) + 
+  geom_bar(stat = "identity", aes(y = count_thousands * alive_prob), 
+           fill = "#b2d7e9", color = "white") + 
+  geom_line(aes(y = count_thousands), size = 2) + 
+  ylab("Number of People (thousands)") + 
+  xlab(NULL)
+
+# base plot
+name_plot
+```
+
+```{r}
+median_yob <- wtd.quantile(x = Joseph$year, weights = Joseph$est_alive_today, probs = 0.5)
+median_yob
+```
+
+- note the clever use of `ifelse` to create a new histogram with one non-zero bar at `median_yob`
+- add titles
+- add text labels (improve fonts)
+- add curved arrow
+- add improvements
+    - better fonts
+    - better titles
+    - better frame
+    - etc
+```{r}
+name_plot <- 
+  name_plot + 
+  geom_bar(stat = "identity", color = "white", fill = "#008fd5", 
+           aes(y = ifelse(year == median_yob, est_alive_today / 1000, 0))) 
+
+# Figure 3.22: Josephs (improved)
+name_plot + 
+  ggtitle(label = "Age Distribution of American Boys Named Joseph", subtitle = "By year of birth") + 
+  geom_text(x = 1935, y = 40, size = 3.5, family = "mono", label = "Number of Josephs \n born each year") + 
+  geom_text(x = 1915, y = 13, size = 3.5, family = "mono", color = "#008fd5", 
+            label = "Number of Josephs \n born each year \n estimated to be alive \n on Jan. 1, 2014") + 
+  geom_text(x = 2003, y = 40, size = 3.5, family = "sans", color = "darkgray",
+            label = "The median\nliving Joseph\nis 37 years old.") + 
+  geom_curve(x = 1995, xend = 1974, y = 40, yend = 24, 
+             arrow = arrow(length = unit(0.3, "cm")), curvature = 0.5) + 
+  ylim(0, 42) + 
+  theme_fivethirtyeight()
+  
+```
+
+
+
+
+## Three Important Concepts 
+
+1. Data can be usefully organized into tables with "cases" and "variables."  
+    - In "tidy data" every case is the same sort of thing (e.g. a person, a car, a year, a country in a year) 
+    - We sometimes even modify data in order to change what the cases represent in order to better represent a point.
+
+#. Data graphics and "glyph-ready" data
+    - each case corresponds to a "glyph" (mark) on the graph
+    - each variable to a graphical attribute of that glyph such as x- or y-position, color, size, length, shape, etc. 
+    - same is true for more technical tools (e.g., models) 
+
+#. When data are not yet in glyph-ready form, you can transform (i.e. wrangle) them into glyph-ready form.  
+    - Such transformations are accomplished by performing one or more of a small set of basic operations on data tables
+    - This is the work of data "verbs" 
+
+
