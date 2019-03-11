@@ -1,0 +1,575 @@
+---
+title: "Unsupervised Learning"
+subtitle: "MDSR Ch 9 & ISLR Ch 10"
+output: 
+  slidy_presentation: default
+  html_notebook: default  
+---
+
+
+
+```{r Front Matter, echo=TRUE, message=FALSE, warning=FALSE, include=FALSE}
+# clean up R environment
+rm(list = ls())
+
+# global options
+knitr::opts_chunk$set(eval=TRUE, include=TRUE)
+options(digits=4)
+
+# packages used
+library(mdsr)
+library(tidyverse)
+library(ISLR)
+library(tibble)
+library(ggdendro)
+
+
+# user-defined functions 
+
+
+# inputs summary
+data("USArrests")
+data("NCI60")
+
+```
+
+
+## Agenda
+
+
+#### Announcements
+
+- MDSR Ch 9 programming notebook assigned
+- MDSR Ch 8 & 9 Exercises assigned
+- midterm exam
+    - mix of in-class and take-home
+    - in-class portion Wed 2/27
+    - take-home portion due Fri 3/1 at 11:59pm
+    - class will not meet on Friday 3/1 
+
+#### MDSR Ch 9 Errata / Tips
+
+- Some sections don't require programming, but please still include the headers for navigation purposes
+- p. 206: the `destfile` argument probably won't work for you as written.  You can
+    1. (recommended) create a folder called "data" in the same directory as your .Rmd file
+    2. delete `data/` and use `destfile = fueleconomy.zip` instead.  You'll need to update subsequent functions on p. 206 and 207 in kind when attempting to access files in a subdirectory called `data`
+- Section 9.2.2: my results aren't identical to those in the book... maybe I made a mistake or maybe the data has changed.  Namely, the clusters are similar but don't *exactly* match on close inspection.  
+
+
+## Statistical Learning (recall)
+
+Q: What are some differences between **Supervised** and **Unsupervised** Learning?
+
+
+
+## Statistical Learning (recall)
+
+- statistical learning refers to a vast set of tools for understanding data
+- Typical distinction between **Supervised** and **Unsupervised** learning
+    - **Supervised** learning predictive or inferential modeling
+        - there is a response variable (Y)
+        - predictive modeling: we want to anticipate the response (Y) ahead of time based on knowledge of a set of measurable inputs (X's)
+        - inferential modeling: we want to understand the way our response (Y) changes as the explanatory variables (X's) change
+    - **Unsupervised** learning methods could be considered "data discovery" models 
+        - there is NO response variable (Y)
+        - we are interested in exposing interesting relationships/groups/clusters among several explanatory variables (X's)
+
+
+## Unsupervised Learning 
+
+- Often considered within the domain of Exploratory Data Analysis
+    - Search for useful structure among explanatory variables: X1, X2, ...,Xp. 
+    - Informative way to visualize the data? 
+    - Subgroups among the variables or among the observations?  
+- **Dimension reduction**
+    - express low-dimensional representation of the data that explains a good fraction of the variance
+    - commonly used for data visualization or pre-processing before supervised learning techniques are applied
+    - Principle component analysis (PCA)--discussed here
+    - Singular value decomposition (SVD)--see MDSR Ch 9, for example
+- **Clustering**
+    - broad class of methods for **discovering unknown subgroups** within data
+    - Hierarchical clustering: 
+    - k-means: specify number of groups
+- Q: when would this be useful?
+
+
+## Challenge of Unsupervised Learning
+
+- No "groud truth"
+- in supervised learning we can check our work by evaluating predictions using cross-validation, independent test set, etc.
+- typically no mechanism to "check our work" in unsupervised learning because the true answer is unknown
+
+
+## Some Examples 
+
+- A cancer researcher might assay gene expression levels in 100 patients with breast cancer. He or she might then look for subgroups among the breast cancer samples, or among the genes, in order to obtain a better understanding of the disease. 
+
+- A search engine (e.g., Google) might choose what search results to display to a particular individual based on the click histories of other individuals with similar search patterns. 
+
+- Mapping evolutionary relationships among various biological species or other entities--their phylogeny--based upon similarities and differences in their physical or genetic characteristics.
+
+
+## Principal Components Analysis (PCA)
+
+- **Goal**: summarize a large set of correlated variables with a smaller number of representative variables that collectively explain most of the variability in the original data set
+- **Intuition**:
+    - many of our variables are correlated or possibly redundant
+    - perhaps we can rotate our data to identify 
+        1. (PC1) the axis that maximizes variability (first principal component--PC1)
+        2. (PC2) an axis perpendicular to PC1 that maximizes the remaining variability
+        3. and so on... until we explain all of variability in the data
+    - hopefully, we can explain most (or a lot) of the total variability with only the **first few** principal components
+    - sometimes we can even attempt to interpret how principal components associate (i.e., "load") with respect to other variables in the data 
+- **Method**: PCA can be done by eigenvalue decomposition of a data covariance (or correlation) matrix or singular value decomposition (SVD) of a data matrix, usually after a normalization step of the initial data. 
+
+![image credit: James et al (2013) <http://www-bcf.usc.edu/~gareth/ISL/> Fig 6.14](pca-ISLR-6-14.png)
+
+## US Arrests by State
+
+- we want to compare states on these four variables 
+    - Murder
+    - Assault
+    - Rape
+    - UrbanPop (% of state living in urban areas)
+- Q: which variable(s) would you expect to have the largest **variance**
+
+```{r}
+data("USArrests")
+head(USArrests)
+```
+
+## PCA: US Arrest Data
+
+- measurement units & scales significantly impact variance
+- we often want to standardize the variables first 
+    - mean = 0; sd = 1 (convert measurements to z-scores)
+    - this amounts to giving each variable equal weight
+    - mutes effect of unit conversion (km to meters impacts variance estimate)
+- might not standardize if all variables are measured on same scale
+
+
+#### First two principal components
+
+- Q: How do PC1 and PC2 associate with our four variables? 
+- Note: See what happens if we DON'T standardize variables...
+
+```{r}
+USArrests_pca <- USArrests %>%
+  prcomp(scale = TRUE)  # standardize the variables
+
+# the result is a list object
+str(USArrests_pca)
+
+# first two principal components
+(-1) * USArrests_pca$rotation[, 1:2] %>% round(2)
+```
+
+```{r}
+# plot of the first two principal components
+USArrests_pca$x %>%
+  as.data.frame() %>%  # `ggplot2` expects a data frame object
+  rownames_to_column() %>%
+  ggplot(aes(x = -PC1, y = -PC2)) + 
+  geom_text(aes(label = rowname), size = 3) + 
+  xlab("Best Vector from PCA (approx. Violent Crime)") + 
+  ylab("2nd Best Vector from PCA (approx. Urbanization)") + 
+  ggtitle("Two-dimensional representation of US Arrests by State")
+
+```
+
+
+## Proportion of variance explained 
+
+- (recall) **Goal**: summarize a large set of correlated variables with a smaller number of representative variables that collectively explain most of the variability in the original data set
+- In general, a $n \times p$ data matrix **X** has $\text{min}(n-1, p)$ distince principal components
+    - we want smallest number of PC's to get a good understanding of the data
+    - there isn't really an optimal solution to this problem...
+- **Proportion of variability explained (PVE)**
+    - Assess PVE for each of our principal component vectors
+    - Can we find a point of diminishing return among principal components
+        - we want fewest number of PC's that still do a good job representing the data
+        - informally, we look for an "elbow" in the **scree plot**
+
+![By Kevin Lenz (talk contribs) - Own work, CC BY-SA 2.5, <https://commons.wikimedia.org/w/index.php?curid=1239742>](scree.jpg)
+
+## Scree Plot (US Arrest Data)
+
+- Q: How did we do?
+- Q: How many principal components do you think we should consider?
+
+
+```{r eval=FALSE}
+USArrests_pve <- 
+  data.frame(sd = USArrests_pca$sdev) %>%
+  rownames_to_column() %>%
+  mutate(rowname = parse_number(rowname), 
+         totalVar = sum(USArrests_pca$sdev^2), 
+         pve = 100 * sd^2 / totalVar, 
+         cusum = cumsum(pve))
+
+# scree plot
+USArrests_pve %>%
+  ggplot(aes(x = rowname, y = pve)) + 
+  geom_line(type = 3) + 
+  xlab("Principal Component") + 
+  ylab("Proportion of Variance Explained") + 
+  ggtitle("Scree Plot of Principal Components for US Arrests Data") 
+
+  
+# cumulative PVE plot
+USArrests_pve %>%
+  ggplot(aes(x = rowname, y = cusum)) + 
+  geom_line(type = 3) + 
+  xlab("Principal Component") + 
+  ylab("Proportion of Variance Explained") + 
+  ggtitle("Cumulative Proportion of Variance Explained for US Arrests Data") 
+
+```
+
+
+
+## NCI60 Data Example
+
+- The NCI-60 cancer cell line panel is a group of 60 human cancer cell lines used by the National Cancer Institute (NCI) for the screening of compounds to detect potential anticancer activity.
+    - <https://en.wikipedia.org/wiki/NCI-60>
+    - 64 cancer cell lines
+    - 6830 gene expression measurements
+- Q: Why would we care about dimension reduction here? (what's a "case" in the data?)
+
+
+
+## Inspecting the data
+
+```{r}
+require(ISLR)
+data("NCI60")
+
+cancerLabels <- NCI60$labs 
+
+# recode immortalized cell lines
+cancerLabels <- ifelse(test = grepl(pattern = "MCF7", x = cancerLabels),
+                       yes = "BREAST", no = cancerLabels)
+cancerLabels <- ifelse(test = grepl(pattern = "K562", x = cancerLabels),
+                       yes = "LEUKEMIA", no = cancerLabels)
+
+nciData <- NCI60$data 
+
+# dimensions of the data
+nrow(nciData)  # cases
+ncol(nciData)  # variables
+
+# inspect NCI cancer labels
+head(cancerLabels)
+
+# distribution of cancer cell lines available
+tally(cancerLabels ~ 1)
+
+```
+
+<!-- Day2 -->
+
+## Principal components analysis of NCI60 data
+
+- could make a case either way for standardizing variables since all metrics are on same scale in this case
+- Q: How many total principal components possible?
+    - We have 64 PC's this time
+    - US Arrests had 4 PC's
+
+```{r}
+# perform pca on scaled genes
+NCI_pca <- nciData %>%
+  prcomp(scale = TRUE)  
+
+# the result is a list object
+str(NCI_pca)
+```
+
+
+## First few principal components of NCI60 data
+
+```{r}
+# plot PC1 vs PC2
+NCI_pca$x %>%
+  as.data.frame() %>%  # `ggplot2` expects a data frame object
+  ggplot(aes(x = PC1, y = PC2)) + 
+  geom_point(aes(color = cancerLabels), size = 3) + 
+  xlab("Best Vector from PCA") + 
+  ylab("Second Best Vector from PCA") + 
+  ggtitle("Two-dimensional representation of 6830 Genes (colored by actual cancer type)") 
+
+
+# plot of PC1 vs PC3
+NCI_pca$x %>%
+  as.data.frame() %>%  # `ggplot2` expects a data frame object
+  ggplot(aes(x = PC1, y = PC3)) + 
+  geom_point(aes(color = cancerLabels), size = 3) + 
+  xlab("Best Vector from PCA") + 
+  ylab("Third Best Vector from PCA") +
+  ggtitle("Two-dimensional representation of 6830 Genes (colored by actual cancer type)")
+```
+
+
+
+```{r}
+# SD and variance explained by each PC
+summary(NCI_pca)
+
+# proportion of variance explained (PVE) of each PC
+NCI_pve <- 
+  data.frame(sd = NCI_pca$sdev) %>%
+  rownames_to_column() %>%
+  mutate(rowname = parse_number(rowname), 
+         totalVar = sum(NCI_pca$sdev^2), 
+         pve = 100 * sd^2 / totalVar, 
+         cusum = cumsum(pve))
+
+# scree plot
+NCI_pve %>%
+  ggplot(aes(x = rowname, y = pve)) + 
+  geom_line(type = 3) + 
+  xlab("Principal Component") + 
+  ylab("Proportion of Variance Explained") + 
+  ggtitle("Scree Plot of Principal Components for NCI60 Data") 
+
+  
+# cumulative PVE plot
+NCI_pve %>%
+  ggplot(aes(x = rowname, y = cusum)) + 
+  geom_line(type = 3) + 
+  xlab("Principal Component") + 
+  ylab("Proportion of Variance Explained") + 
+  ggtitle("Cumulative Proportion of Variance Explained for NCI60 Data") 
+
+```
+
+
+
+
+
+
+## Clustering
+
+- Both principal components and clustering seek to simplify the data via a small number of summaries, but the mechanisms differ
+    - PCA (& SVD) attempts to find a low-dimensional representation of the observations that explain a good fraction of the variance
+    - Clustering looks to find subgroups or define similarity among the observations
+- **Clustering** algorithms impart organizing structure for describing degrees of similarity between different things
+    - **Hierarchical clustering** does not specify a desired number of clusters, instead maps similarity among all *n* (distinct) observations
+    - a **dendogram**: a tree-based organizing structure for describing/visualizing those degrees of similarity,
+      - doesn't matter how those relationships came to be
+      - The tree may or may not reflect some deeper relationship among the objects measured
+      - *Looks* like a decision tree, but it approaches the problem from the opposite direction
+    - ** *K*-means** clustering seeks to partition observations into a pre-specified number of (K) clusters
+
+
+![image credit: James et al (2013) <http://www-bcf.usc.edu/~gareth/ISL/> Fig 10.10](dendogram-ISLR-10-10.png)
+
+## Hierarchical clustering
+
+- appropriate when cases are decribed by a set of numerical variables (none of which is a *response*)
+- Method (agglomorative/bottom-up clustering):
+    1. Begin with *n* cases each measured as a point in Cartesian space and calculate all ${n\choose2} = \frac{n(n-1)}{2}$ pairwise dissimilarities.  **Treat each observation as its own cluster.**
+    2. For $i = n, (n-1), ..., 2$:
+        A. Examine all pairwise inter-cluster dissimilarities among the *i* clusters and fuse the two clusters that are **least dissimilar**.  
+        B. Compute new pairwise inter-cluster dissimilarities among the $i-1$ remaining clusters
+- for an individual quantitatve variable, it's easy to measure distance between cases
+- with multiple variables, we need to adjust for different scales and units
+    - no "best" solution... usually requires domain expertise
+    - with no other information, Euclidean distance is a sensible default (but there are others)
+
+![image credit: James et al (2013) <http://www-bcf.usc.edu/~gareth/ISL/> Fig 10.11](hclust-ISLR-10-11.png)
+
+
+## Distance & Linkage: 
+
+![image credit: James et al (2013) <http://www-bcf.usc.edu/~gareth/ISL/> Fig 10.11](hclust-ISLR-10-11.png)
+
+- multiple linkages are available for calculating inter-cluster dissimilarities. 
+- most common linkages (balanced dendograms)
+    - complete linkage: largest inter-cluster dissimilarity
+    - average linkage: mean inter-cluster dissimilarity
+- less common linkages
+    - single linkage: smallest inter-cluster dissimilarity 
+    - centroid linkage: dissimilarity among the centroids of clusters 
+
+
+## Hierarchical clustering
+
+- The tree is "grown" in reverse--from bottom to top
+- The **dissimilarity** between clusters indicates the height in the dendogram at which the fusion should be placed.
+    - Q: which is more similar to obs #2?
+        - Obs #7
+        - Obs #9
+    - Q: which pair of observations is more similar?
+        - {3, 6}
+        - {9, 2}
+- Where might we "cut" the dendogram to define clusters?
+
+
+![image credit: James et al (2013) <http://www-bcf.usc.edu/~gareth/ISL/> Fig 10.10](dendogram-ISLR-10-10.png) 
+
+<!-- Day3 -->
+
+## Cluster analysis of NCI60 data
+
+- the rescaled variables inherited unfortunate names (just a column number)
+    - Q: What means & sd's do you expect for variables `1` and `2`? (does it match?)
+- clustering algorithm
+    - calculate all point-to-point distances (e.g., pairwise dissimilarities)
+    - begin by treating each point as a cluster
+    - iteratively fuse clusters that are least dissimilar according to linkage chosen
+
+
+##### Hierarchical Clustering
+
+```{r fig.height=6, fig.width=8}
+# scale the data (centered with SD 1)
+NCI_std <-
+  scale(nciData) %>%
+  as.data.frame()
+
+# the variables have inherited some unfortunate names (just column number)
+favstats(~ `1`, data = NCI_std)
+favstats(~ `2`, data = NCI_std)
+
+NCI_dist <- dist(NCI_std)
+
+# # plot dedrogram (average linkage)
+# NCI_dist %>%
+#   hclust(method = "average") %>%
+#   plot(cex = 0.9, labels = cancerLabels, main = "NCI60 Dendogram with Average Linkage")
+
+# construct dendogram (complete linkage)
+NCI_dendo <-
+  NCI_dist %>%
+  hclust(method = "complete")
+
+# print dendogram info (distance & method)
+print(NCI_dendo)
+
+# plot dedrogram (complete linkage)
+NCI_dendo %>%
+  plot(cex = 0.9, labels = cancerLabels, lwd = 2,
+       main = "NCI60 Dendogram with Complete Linkage")
+
+```
+
+
+
+##### Cut Dendogram to define clusters
+
+- Complete dendogram can be used to produce clusters
+- establish cut point based on dissimilarity index (vertical axis)
+- software can choose cut based on requested number of clusters
+- Q: Did we learn anything from our clusters?
+
+```{r fig.height=6, fig.width=8}
+# Cut dendogram to produce clusters
+NCI_dendo %>%
+  plot(labels = cancerLabels, lwd = 2,
+       main = "NCI60 Dendogram with Complete Linkage (5 clusters)") %>%
+  abline(h = 135, col = "red", lwd = 3)
+
+# Cut dendogram--Hierarchical clusters
+NCI_DendoClusters <- cutree(tree = NCI_dendo, k = 5)
+
+
+# clustering patterns (Leukemia & melanoma; not so much breast)
+tally(cancerLabels ~ NCI_DendoClusters)
+
+
+```
+
+
+
+## K-means clustering
+
+- Goal: partition the observations into a pre-specified number of (*K*) non-overlapping clusters
+    - minimize within-cluster variation
+    - each observation is assigned to exactly one cluster
+    - similar to classification, but there's no response variable, so meaning of clusters is inferred implicitly
+- Method (see figure):
+    1. Randomly assign each of the observations to clusters 1 through K
+    2. Iterate until cluster assignments stop changing:
+        A. For each of the *K* clusters, compute the cluster *centroid* (vector of *p* feature means for the observations in the *k*th cluster)
+        B. Assign each observation to the cluster whose centroid is closest (e.g., in Euclidean distance)
+    3. (strongly recommended) Run algorithm multiple times from different random initial configurations to temper impact of randomness in step 1.  Argument `nstart` is available in `kmeans()` function for this purpose.
+- Cluster interpretation:
+    - remember this is part of EDA to understand structure in our data
+    - plot the clusters
+    - investigate summary statistics for the clusters
+
+![image credit: James et al (2013) <http://www-bcf.usc.edu/~gareth/ISL/> Fig 10.6](kmeans-ISLR-10-6.png)
+
+
+## K-means Clustering
+
+- Suppose we consider k-means with 5 clusters
+- Q: How does result compare with our Hier. Clust. Dendogram?
+
+```{r}
+set.seed(2)
+
+# perform kmeans clustering (k = 5 clusters)
+NCI_kmean <-
+  NCI_std %>%
+  kmeans(centers = 5, nstart = 20)
+
+# what are we working with
+str(NCI_kmean)
+
+# compare Hierarchical Clusters with K-Means Clusters
+NCI_KMeanClusters <- NCI_kmean$cluster
+
+# both methods match for one cluster, but others are noisier
+tally(NCI_DendoClusters ~ NCI_KMeanClusters)
+
+```
+
+
+## Hierarchical Clustering on first 7 principal components
+
+- How might we combine methods?
+    - PCA for dimension reduction
+    - Cluster to assess similarity
+
+```{r fig.height=4, fig.width=6}
+NCI_pca_hcluster <-
+  NCI_pca$x[, 1:7] %>%
+  dist() %>%
+  hclust()
+
+# plot
+NCI_pca_hcluster %>%
+  plot(labels = cancerLabels, lwd = 2,
+       main = "Hierarcical Clustering on First Seven Principal Components")
+
+tally(cancerLabels ~ cutree(NCI_pca_hcluster, k = 7))
+```
+
+
+
+## Practical issues in clustering
+
+- Decisions to be made...
+    - Standardize variables?
+    - Hierarchical Clustering decisions
+        - Which dissimilarity measure?
+        - What type of linkage?
+        - Where might we "cut" the dendogram to define clusters?
+    - K-means decision
+        - how to choose K?
+- Integrity of the clusters obtained
+    - hard to validate clusters
+    - no consensus on assessing whether cluster is artifact of chance (e.g. p-value)
+    - sensitive to extreme observations (and multivariate outliers aren't always easy to spot)
+
+#### Recommendations
+
+- experiment with different choices of linkage, standardized/not, etc, and look for patterns or structures that consistently emerge
+- cluster random subsets of the data to get sense of robustness to outliers
+- most importantly, be careful when reporting results of cluster analysis
+    - not absolute truth about the data (much less the population)
+    - it's more of a starting point to generate scientific questions for study on (ideally) independent data
+
+
+

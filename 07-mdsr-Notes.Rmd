@@ -1,0 +1,1457 @@
+---
+title: "Statistical Modeling Foundations"
+subtitle: "MDSR Ch 7 & R4DS Ch 22-23 & MDSR Appendix E"
+output: 
+  slidy_presentation: default
+  html_notebook: default 
+---
+
+
+```{r Front Matter, eval=TRUE, message=FALSE, warning=FALSE, include=FALSE}
+# global options
+knitr::opts_chunk$set(eval=TRUE, include=TRUE)
+# options(na.action = na.warn)
+
+# clean up R environment
+rm(list = ls())
+
+# load all packages here
+library(mdsr)
+library(tidyverse)
+library(mosaic)
+library(nycflights13)
+library(modelr)
+library(lubridate)
+
+
+### user-defined functions here (if any)
+# `model1` calculates predictions for a given model
+# `measure_distance` calculates our distance metric for a given model
+# `sim1_dist` helper function for `purrr::map2()` execution
+
+# inputs (e.g. data) summary
+data("flights")  # from `nycflights13`
+data("sim1")     # from `modelr`
+data("sim2")     # from `modelr`
+data("sim3")     # from `modelr`
+data("sim4")     # from `modelr`
+
+```
+
+
+## Agenda
+
+- resources
+    - MDSR Chapter 7
+    - R for Data Science Chapters 22-23 (<https://r4ds.had.co.nz/model-intro.html>)
+- statistical modeling foundations
+    - Samples & populations
+    - Sample statistics
+    - Bootstrapping
+    - Outliers
+    - Regression
+
+
+#### Announcements
+
+- Keep up with Piazza
+- Canvas assignments 
+    - MDSR Chap 5 Exercises
+    - Mini-Project: Bike Share and Local Weather
+    - Programming Notebooks: MDSR Chapter 07
+        - Your results may differ from the book in Sec 7.2 & Sec 7.3 (it's OK)
+        - likely `set.seed()` issue, so random/simulated processes differ
+
+
+## Statistical Foundations
+
+- **Goal: extract *meaning* from data**  
+- Common pitfall...
+    - don't *underestimate* importance of visualization 
+    - don't *overestimate* importance of analytical results 
+    - both have important and complimentary roles 
+
+![Image credit: R for Data Science (https://r4ds.had.co.nz/model-intro.html)](r4ds_s22-0.png)
+
+
+## Key ideas: Samples, populations, sampling distributions
+
+- our data are just a **sample** representative of some larger population (or process)
+    - the sample is *random*
+    - if another person were to replicate the study, they would get a different sample
+    - if we were to do the study again in the future, we would get a different sample
+- we care about patterns/structure/models of the **population**
+    - a good model includes salient features of the population to result in similar outcomes across (random) samples
+- the **sampling distribution** is simply a distribution of plausible outcomes that would be observed if the study were repeated infinitely many times.
+    - basically, this is a hypothetical distribution of a sample statistic among all possible samples of a given size
+    - this primarily gives us a sense of the *variability* to be expected from one sample to another
+
+
+## Statistical Foundations
+
+- we often don't actually care that much about the specific sample that we have
+    - a sample is a one-time realization of some data collection process
+    - if we repeat the study/investigation and collect new data we almost certainly observe a different sample
+    - if we can't make conclusions *beyond* the specific sample we happened to encounter, we typically haven't gained much
+- we typically care far more about what the sample **represents** (and it's limitations)
+    - exploration or explanation of some larger population or process
+    - outcomes/relationships in the data that can be replicated/reproduced
+    - future predictions
+    - and carefully quantifying uncertainty of the outcomes above
+
+
+## Example: meet Chris
+
+![](chris.png)
+
+- Motivation: 
+    - A close friend of mine is an executive management consultant with PwC
+    - Chris lives on the East Coast, but travels (M-Th) every week for work
+    - His primary clients (right now) are on West Coast & Midwest.
+    - Flight delays are a major threat, because if the client can't rely on him to be there on time they may give the project to a different consultant.
+- **Goal: He wants to maximize time at home with his wife and kids, without jeopardizing work commitments**
+    - How early should Chris should plan to arrive in Chicago (ORD) if he wants to avoid missing meetings due to flight delays?
+    - Q: Ideas how to approach the problem?
+    
+
+```{r eval=TRUE}
+require(tidyverse)
+require(mdsr)
+require(mosaic)
+require(nycflights13)
+
+data(flights)
+
+# Get flights from NYC to ORD
+OrdDelays <- 
+  flights %>%
+  filter(dest == "ORD")
+```
+
+
+
+## Example: flight delays from New York to Chicago
+
+```{r eval=TRUE}
+OrdDelays28 <- 
+  OrdDelays %>%
+  sample_n(size = 28)
+```
+
+- Chris flies a lot and knows some statistics, but lets suppose he only has data from 28 flights
+    - Here are some summary statistics
+    - Q: How should he decide when to arrive?
+
+```{r eval=TRUE}
+# summary statistics of delays
+favstats( ~ arr_delay, data = OrdDelays28)
+```
+
+## Example: flight delays from New York to Chicago
+
+- Trade-off... Maybe Chris can risk being late once in a while to have more time with his family
+- Here's what he might decide *based on his sample*
+    - he flies just about every week
+    - 97% percent on-time would mean that he expects to be late a little more than once per year.
+
+```{r eval=TRUE}
+tolerance28 <- qdata(~ arr_delay, p = 0.97, data = OrdDelays28)
+tolerance28
+
+```
+
+## Example: flight delays from New York to Chicago
+
+- Chris doesn't have the **population**
+    - he can't know if his is an effective policy or not... 
+    - does this **really** work 97% of the time??  
+    - Is he too late?  Too early??
+- In our hypothetical exercise, we **do** have a population, 
+    - we can see how he did 
+
+```{r eval=TRUE}
+# reality of population (unknown/unknowable to Chris)
+favstats( ~ arr_delay, data = OrdDelays)  # full data
+
+# population value for 0.97 quantile
+tolerance <- qdata(~ arr_delay, p = 0.97, data = OrdDelays)  # full data
+tolerance
+
+# Actual performance for Chris...
+tally(~ arr_delay < tolerance28[2], data = OrdDelays, format = "proportion")
+```
+
+
+
+## Problem solved?  (Not quite)
+
+- There's still quite a bit of risk due to randomness... 
+    - an interval estimate for the 0.97 quantile would be better
+    - Q: **how should we do it?**
+
+```{r eval=TRUE}
+# Results vary... four different samples = four different results
+n <- 28
+
+qdata(~ arr_delay, p = 0.97, data = sample_n(OrdDelays, size = n, replace = TRUE))
+qdata(~ arr_delay, p = 0.97, data = sample_n(OrdDelays, size = n, replace = TRUE))
+qdata(~ arr_delay, p = 0.97, data = sample_n(OrdDelays, size = n, replace = TRUE))
+qdata(~ arr_delay, p = 0.97, data = sample_n(OrdDelays, size = n, replace = TRUE))
+```
+
+## Distribution of the estimate depends on sample size
+
+- Let's simulate 1000 samples from our `OrdDelay` (full) data
+- Any one of these could be the sample that Chris happened to observe
+- We just want to see how much these samples vary from one to the next
+
+```{r eval=TRUE}
+n <- 28
+
+SimsSmallN <- 
+  mosaic::do(1000) * qdata(~ arr_delay, p = 0.97, 
+                          data = sample_n(OrdDelays, size = n, replace = TRUE))
+
+# inspect result
+head(SimsSmallN)
+
+# variability of our 0.97 quantile estimate (note "sd")
+favstats(~ quantile, data = SimsSmallN)
+```
+
+#### Vocabulary
+
+- *Sample size (n)* is the number of cases in an observed sample
+- *Sampling distribution* is the collection of the sample statistic from all trials
+    - a theoretical sampling distribution includes all possible trials
+    - we have 1000 simulated trials, 
+        - that specific number doesn't matter much as long as it's "large"
+        - 10s of thousands or millions are common in practice
+        - do more if a precise result is important
+- *shape* of the sampling distribution is worth noting (ours is right-skewed here)
+- *standard error* is the standard deviation of the sampling distribution for a statistic
+    - Here, we estimate the SE using the SD of many simulated 0.97 quantile estimates
+    - you can find this result in our `favstats()` output above
+
+```{r eval=TRUE}
+SimsSmallN %>%
+  ggplot() + 
+  geom_histogram(aes(x = quantile)) + 
+  ggtitle("1000 simulated 0.97 quantiles for flight delays among samples of n = 28")
+```
+
+
+## What if we have a bigger sample?
+
+- Maybe Chris can pool flight information with a few colleagues that regularly fly NYC ro ORD
+    - No flight counted more than once (i.e. if they had shared a flight)
+    - Q: Would a bigger data set matter?  What do you expect to change?
+
+```{r eval=TRUE}
+nBigger <- 150
+
+SimsBigN <- 
+  mosaic::do(1000) * qdata(~ arr_delay, p = 0.97, 
+                          data = sample_n(OrdDelays, size = nBigger, replace = TRUE))
+
+# inspect result
+head(SimsSmallN)
+
+```
+
+#### Plot comparison (n = 28; n = 150)
+
+```{r eval=TRUE}
+# combine results into a single tbl
+BothSims <- 
+  bind_rows(SimsSmallN %>% mutate(SampleSize = n), SimsBigN %>% mutate(SampleSize = nBigger)) 
+
+# summary comparison
+favstats(quantile ~ SampleSize, data = BothSims)
+
+# plot comparison
+BothSims %>%
+  ggplot(aes(x = quantile)) + 
+  geom_histogram(bins = 30) + 
+  facet_grid( ~ SampleSize) +
+  xlab("Sample 0.98 Quantile")
+```
+
+
+
+## Access to Sampling Distribution
+
+- Important: in the previous exercise we were able to simulate an actual sampling distribution because we were actually drawing random samples from the population.  
+    - We nearly always just have one sample
+    - We need another way to access the sampling distribution
+- With just one sample of the data we have a few options to characterize a sampling distribution
+    - Analytical solutions derived from statistical theory (e.g. t-test)
+    - Simulation-based methods
+
+
+## Bootstrapping
+
+- We assume our sample is representative of the population
+- The population can be reasonably approximated by many, many, many copies of our sample
+- **Just as we had previously drawn many samples from the population, "bootstrapping" approximates this process by drawing simulated samples (with replacement) from our original sample**
+
+
+#### Discussion Questions: 
+- Why do we need to sample **with** replacement?
+- Does bootstrapping collect **new** data?
+- Do you expect the **mean** of the bootstrap sampling distribution to be equivalent to the mean of the (true) sampling distribution?
+- Do you expect the **standard error** of the bootstrap sampling distribution to be equivalent to the standard error of the (true) sampling distribution?
+
+
+<!-- Day2 -->
+
+## Back to Chris...
+
+**Chris wants to be more confident that flight delays will not make him late more than 3% of the time, what should he do?**  
+- He pools flight delay data with colleagues and they come up with a much bigger data set of 230 flights
+- We'll call it `OrdColleagueData`
+
+## Bootstrap confidence interval
+
+1. using the data combined among Chris' colleagues--`OrdColleagueData`--we sample with replacement and calculate the 0.97 quantile each time.
+2. we now have a distribution of bootstrap sample quantile estimates (1000 of them in this case)
+3. we use that distribution to produce an interval estimate 
+    - In this case, a confidence interval for 97th percentile of arrival delay
+
+
+#### bootstrap sampling distribution
+```{r}
+# Chris and colleagues pool data for 230 samples
+OrdColleagueData <- 
+  OrdDelays %>%
+  sample_n(size = 230, replace = FALSE)
+
+# bootstrap distribution
+BootStrapTrials <- 
+  mosaic::do(1000) * qdata(~ arr_delay, p = 0.97, 
+                           data = sample_n(OrdColleagueData, size = 230, replace = TRUE))
+
+```
+
+#### confidence interval
+
+- If the bootstrap sampling distribution looks approximately Normal: 
+    - compute the Chris's sample mean
+    - estimate the standard error using the standard deviation of the bootstrap sampling distribution
+    - Confidence interval: $est \pm z^* (SE)$
+        - "est" is the estimate from the sample (Chris' data)
+        - $z^*$ is a critical value from the Normal distribution commensurate with confidence level (e.g. 1.96 for 95% CI)
+        - $SE$ is the standard error which we've estimated from the standard deviation of the bootstrap distribution
+- If bootstrap sampling distribution is fairly smooth, but not symmetric (e.g. skewed), 
+    - we could use a percentile method to approximate our confidence interval
+    - not perfect, but still useful
+- If bootstrap sampling distirbution has big gaps or other problems, 
+    - we should think hard about alternative solutions... 
+    - e.g., what's making the sampling distribution so ugly?
+
+
+#### Our results?
+
+- the distribution is not pretty... it's sort of a borderline case
+    - definitely not Normal, but possibly still useful
+    - we should even be suspicious of a bootsrap percentile interval
+        - we'll suppose he wants to 80% confident his flights will arrive on time 97% of the time
+- Discussion questions
+    - Q: How should Chris decide how early he should plan to arrive?
+    - Q: Why could make this bootstrap sampling distribution look so strange?
+
+```{r}
+BootStrapTrials %>%
+  ggplot() + 
+  geom_histogram(aes(x = quantile))
+
+# Maybe Chris just wants to be 80% confident he will be on time 97% of the time
+qdata(~ quantile, p = 0.8, data = BootStrapTrials)
+
+```
+
+
+
+## Outliers
+
+- Part of the problem for Chris was the fact that 
+    1. we were interested in characterizing the tail of the disribution; 
+    2. we had a lot of extreme observations (potential outliers)
+- An **outlier** is an observation that doesn't seem to conform to the pattern of the data
+    - **completely legitimate observations may appear to be outliers**
+    - problematic outliers are cases that are fundamentally different from the population
+        - Q: examples?
+- We can learn a lot by studying extreme observations in the data
+
+## Long delays
+
+- The longest delays (> 6 hrs) were most often associated with American Eagle (MQ) and United Airlines (UA) and frequently occur in the Spring months (March, April, May).  
+    - Q: What should we do with this information?
+
+```{r}
+OrdDelays %>%
+  filter(arr_delay >= 360) %>%
+  transmute(carrier, month, day, dep_delay, arr_delay, air_delay = arr_delay - dep_delay) %>%
+  arrange(desc(arr_delay))
+```
+
+#### 132 minute delays
+
+- Actually, American Eagle (MQ) isn't so bad after looking at carrier volume & comparing with Chris' threshold
+- Best carrier performance
+    - American Airlines looks better than average
+    - United meets expectation; 
+- Below average carrier performance
+    - Pinnacle Airlines (9E) 
+    - JetBlue (B6) 
+
+```{r}
+# inspect long delay volume
+OrdDelays %>%
+  filter(!is.na(arr_delay)) %>%
+  mutate(long_delay = arr_delay >= 132) %>%
+  tally( ~ long_delay | carrier, data = ., format = "count", margins = TRUE)
+
+# inspect long delay proportion
+OrdDelays %>%
+  filter(!is.na(arr_delay)) %>%
+  mutate(long_delay = arr_delay >= 132) %>%
+  tally( ~ long_delay | carrier, data = ., format = "percent") %>%
+  round(2)
+
+```
+
+## We need a way to account for other variables in our model...
+
+- Q: Are the effects we're observing **real** or are we just being fooled by **randomness**?
+- Q: How should we evaluate?
+    - interpret
+    - conclude
+    - what about more data?
+
+```{r}
+# for simplicity, we model average arrival delays here
+ordModel <- 
+  OrdColleagueData %>% 
+  mutate(carrierAA = if_else(carrier %in% c("AA"), true = "AA", false = "OtherCarrier"), 
+         season = if_else(month %in% 3:5, true = "Spring", false = "NotSpring")) %>%
+  lm(arr_delay ~ carrierAA + season, data = .)
+
+# How to interpret? What have we learned? 
+msummary(ordModel)  
+confint(ordModel)  
+```
+
+<!-- Day3 -->
+
+
+## Segue to Model Basics
+
+- We were trying to use Chris' flight data to come up with a rule that could be useful for preventing excessive delays from jeopardizing his meetings in Chicago
+    - We started by only looking at the arrival delay itself `arr_delay`
+    - After poking around for a while, we noticed that useful information might be gained from other variables
+        - carrier
+        - time of year (longest delays in Spring)
+
+
+## Multiple Testing
+
+- If you end up evaluating multiple tests of the same data, you lose control of Type I error rate
+    - Q: What does type I error rate mean?
+    - Q: How do we quantify type I error rate?
+    - Q: What's the big deal?  Why does it matter??
+
+- Multiple testing and appropriate adjustments
+
+```{r}
+# 3 Tests...
+1 - (1 - 0.05)^3
+
+# Bonferroni adjustment for 3 tests
+b <- 0.05 / 3
+1 - (1 - b)^3
+
+```
+
+## ASA Statement on p-values...
+
+- Lots of people have heard of "p-values" and have some vague concept of "smaller the better"
+- Incomplete understanding can lead to bogus conclusions and distrust of statisticians & data analysts
+- Here's what the American Statistical Assoc wants everyone to know about p-values
+    1. p-values can indicate how **in**compatible the data are with a specified model
+    2. p-values do NOT measure the probability that the studied hypothesis is true, or the probability that the data were produced by random chance alone
+    3. scientific conclusions and business or policy decisions should NOT be based only on whether a p-value passes a specific threshold
+    4. proper inference requires full reporting and transparency
+    5. a p-value, or statistical significance, does not measure the size of an effect or the importance of a result
+    6. by itself, a p-value does not provide a good measure of evidence regarding a model hypothesis.
+
+
+## Hypothesis generation vs. hypothesis confirmation 
+
+- traditional focus of modelling is on inference--attempting to confirm some hypothesis is true (or not false...)
+- the process is not *complicated*, but can be *hard* because we need to understand that
+    1. Each observation can either be used for exploration or confirmation, not both.
+    2. You can use an observation as many times as you like for exploration, but only once for confirmation. 
+        - *As soon as you use an observation twice, you’ve switched from confirmation to exploration.*
+- If possible, consider partitioning the data as follows:
+    - 60% of the data for **exploration** (or training) set
+    - 20% of the data for a **query** set
+    - 20% of the data for a **test** (or confirmation) set
+
+
+
+## Model Basics
+
+#### Goals of modeling:
+
+- "provide a simple, low-dimensional summary of a data set" (R4DS)
+- You may use these tools in different contexts for various purposes
+    - description
+    - inference
+    - prediction
+- In each case, we are *explaining variation*
+    - some variation in the data is structural
+    - some variation in the data is simply randomness
+
+## Choosing a model
+
+- Model family (general)
+    - Chosen based on understanding of data and goals of analysis 
+    - Expresses a precise (but generic) pattern you want to capture
+        - Line: $y = a_1 + a_2 * x$
+        - Curve: $y = a_1 * x^{a_2}$
+        - $y$ & $x$ are **variables** that are **observed** in your data
+        - $a_1$ & $a_2$ are **parameters** that can be modified to capture different patterns
+- Fitted model (specific)
+    - **Constrained by model family**
+    - Choose parameters that result in the model that is "closest" to your data
+        - Line: $y = 7 + 3 * x$ 
+        - Curve: $y = 9 * x^2$ 
+
+## All models are wrong (some are useful)
+- "All models are wrong, some are useful" --George Box (statistician)
+- Classical Mechanics (physics): 
+    - Isaac Newton's "laws" of motion (physics) are demonstrably **wrong**
+        - The model generally does well describing motion for objects as small as bacteria and as large as planets, stars, and galaxies.  
+        - Newton's laws were known to be inaccurate when predicting the orbit of Mercury
+    - Close enough?! (i.e. **useful**?)
+- Einstein's theory of (general) relativity
+    - Classical mechanics breaks down when bodies involved are extremely massive or moving extremely fast
+    - Accurate GPS requires relativity (Newton would be off by a couple miles)
+
+#### Moral: all models are wrong; some are useful
+
+1. Newtonian physics was known to be **wrong** for nearly 2 centuries before relativity came along, in part because it failed to accurately predict the orbit of Mercury.  The model was (and is?) **useful** for tons of practical purposes
+
+2. Einstein's theory of relativity is almost certainly **wrong** too because it fails for subatomic particles... but it's still **useful** 
+
+
+## Simple example
+
+- We'll use linear regression as a sandbox to build some intuition and tools
+    - once you understand some basic principles in the context of regression, we can translate to other models
+- consider a simulated data set `sim1` with variables `y` and `x`
+- it looks like they're related to one another, so perhaps we can model their relationsip
+    - Family: $y = b_0 + b_1 * x$
+    - Fit: choose the "best" $b_0$ and $b_1$
+
+```{r}
+sim1 %>%
+  ggplot(aes(x = x, y = y)) + 
+  geom_point()
+```
+
+## Simple example (random models)
+
+- we could just randomly generate models and pick a few candidates that look "best"
+- intuition says this is silly approach... 
+    - Why do we think know better?
+    - How might we judge whether one model is "better" than another?
+
+
+```{r}
+models <- 
+  tibble(
+  b0 = runif(250, -20, 40),
+  b1 = runif(250, -5, 5)
+  )
+
+sim1 %>% 
+  ggplot(aes(x, y)) + 
+  geom_abline(aes(intercept = b0, slope = b1), data = models, alpha = 0.25) + 
+  geom_point() 
+```
+
+
+## Distance from points to the model (1/4)
+
+- a natural thought is to evaluate the vertical distance from each point to a candidate model
+    - the point represents our observed **response** (from the data)
+    - the corresponding location on the model is a **prediction**
+- model fitting applet: <http://www.rossmanchance.com/applets/RegShuffle.htm>
+- Note: x-values are shifted slightly to avoid overplotting in the figure
+
+![](absErrorsR4DS.png)
+
+
+## Distance from points to the model (2/4)
+
+- calculating the distance directly
+    - let's turn our model into a function
+
+```{r}
+model1 <- function(a, data) {
+  # purpose: calculate predictions for a given model 
+  # inputs: 
+  ### a: vector of coefficient estimates for linear model (e.g. intercept & slopes)
+  ### data: vector of observed response data
+  
+  a[1] + data$x * a[2]
+}
+
+# show model predictions
+model1(c(7, 1.5), sim1)
+```
+
+## Distance from points to the model (3/4)
+
+- calculating the distance directly
+    - let's turn our model into a function
+    - measure collective distance from **all points** to the model
+        - Statisticians typically use the “root-mean-squared" deviation
+
+```{r}
+measure_distance <- function(mod, data) {
+  # purpose: calculate distance from observed points to model predictions
+  # inputs: 
+  ### mod: vector of parameter estimates for linear model (e.g. intercept & slope(s))
+  ### data: observed data 
+  
+  diff <- data$y - model1(mod, data)
+  sqrt(mean(diff ^ 2))
+}
+
+# show RMS deviation for the model
+measure_distance(c(7, 1.5), sim1)
+```
+
+## Distance from points to each candidate models (4/4)
+
+- calculating the distance directly
+    - let's turn our model into a function
+    - measure collective distance from **all points** to the model
+- repeat for all 250 of our models using `purrr::map2()` 
+
+```{r}
+sim1_dist <- function(b0, b1) {
+  # purpose: helper function because our distance function 
+  #            expects the model as a numeric vector of length 2
+  # inputs: 
+  ### b0: intercept estimate
+  ### b1: slope estimate 
+  ### sim1: data in environment
+
+  measure_distance(c(b0, b1), sim1)
+}
+
+models <- 
+  models %>% 
+  mutate(dist = purrr::map2_dbl(b0, b1, .f = sim1_dist))
+
+models
+```
+
+#### Progress...
+
+- We now have a distance metric that quantifies performance of all 250 of our random models 
+- Now we can start to evaluate if some of them are **useful**
+
+```{r}
+sim1 %>% 
+  ggplot(aes(x, y)) + 
+  geom_abline(aes(intercept = b0, slope = b1), data = models, alpha = 0.25) + 
+  geom_point() 
+```
+
+
+
+## Best (random) models for `sim1` data
+
+- we have a metric
+- let's inspect our top 10 results according to our distance criterion
+    - brightest models fit the data "best"
+    - note all the obviously silly models are gone
+    - several decent candidate models left
+- Q: How can we do *even better*?
+
+
+```{r}
+sim1 %>%
+  ggplot(aes(x, y)) + 
+  geom_point(size = 2, colour = "grey30") + 
+  geom_abline(aes(intercept = b0, slope = b1, colour = -dist), 
+              data = filter(models, rank(dist) <= 10))
+```
+
+<!-- Begin Day 4 (1/30) -->
+
+## Best (random) models for `sim1` data
+
+- What if we visualized the slope (b1), intercept (b0), and distance metric (diff) on a 3-dimensional plot?
+    - slope and intercept are **both** related to distance metric
+    - we just want to search for the "best" combinations using our criterion
+- points are slope/intercept pairs (i.e. models) colored by our distance criterion 
+    - brighter color is "better" (i.e. less collective distance from model to data)
+    - the top 10 shown previously are highlighted in red
+
+```{r}
+ggplot(models, aes(b0, b1)) +
+  geom_point(data = filter(models, rank(dist) <= 10), size = 4, colour = "red") +
+  geom_point(aes(colour = -dist))
+```
+
+## Random models was silly... but not *that* silly
+
+- Turns out we could learn quite a bit with this method, and came up with a handful of decent models
+- Q: How might we extend the method for a more systematic approach?
+
+
+
+
+## Systematic search
+
+- Maybe instead of searching randomly, we search *systematically* with a grid of slope-intercept combinations?
+    - we'll start with 250 models again
+    - we can control how fine the grid is if we want
+    - avoid clumping and sparsity of randomness
+- so far the new grid suggests
+    - b0 is maybe around 4
+    - b1 is maybe around 2
+    - Q: Is the model $y = 4 + 2X$ wrong? Is it useful?  
+
+```{r}
+# create systematic grid; fit all models to the data
+grid <- 
+  expand.grid(b0 = seq(-5, 20, length = 25), 
+              b1 = seq(1, 3, length = 25)) %>% 
+  mutate(dist = purrr::map2_dbl(b0, b1, sim1_dist))
+
+# plot models as points; color "best"
+grid %>% 
+  ggplot(aes(b0, b1)) +
+  geom_point(data = filter(grid, rank(dist) <= 10), size = 4, colour = "red") +
+  geom_point(aes(colour = -dist)) 
+
+sim1 %>%
+  ggplot(aes(x, y)) + 
+  geom_point(size = 2, colour = "grey30") + 
+  geom_abline(aes(intercept = b0, slope = b1, colour = -dist), 
+              data = filter(grid, rank(dist) <= 10))
+```
+
+
+## Systematic search cont'd
+
+- let's try a finer grid...
+- best results so far 
+    - b0 between 0 and 7; 
+    - b1 between 1.5 and 2.5
+- Q: could we just continue this way?
+
+
+```{r}
+# create systematic grid; fit all models to the data
+grid <- 
+  expand.grid(b0 = seq(0, 7, length = 50), 
+              b1 = seq(1.5, 2.5, length = 50)) %>% 
+  mutate(dist = purrr::map2_dbl(b0, b1, sim1_dist))
+
+# plot models as points; color "best"
+grid %>% 
+  ggplot(aes(b0, b1)) +
+  geom_point(data = filter(grid, rank(dist) <= 10), size = 4, colour = "red") +
+  geom_point(aes(colour = -dist)) 
+
+sim1 %>%
+  ggplot(aes(x, y)) + 
+  geom_point(size = 2, colour = "grey30") + 
+  geom_abline(aes(intercept = b0, slope = b1, colour = -dist), 
+              data = filter(grid, rank(dist) <= 10))
+```
+
+## Recap of our grid search...
+
+- We defined a distance metric (root-mean-square deviation) that we want to use to compare models
+    - Smaller RMS deviation indicates the model is "close" to the data 
+    - The "best" model is the one that minimizes our criterian (i.e. RMS deviation)
+- Search process:
+    1. decided on a model family (linear in this case)
+    2. We started with a bunch of random lines, but then decided a systematic grid of combinations was a better idea
+    3. We picked the 10 best models using our criterion
+    4. We then searched again with a finer grid
+    5. Repeat steps 4 & 5 until satisfied
+    6. Estimate model parameters
+
+
+
+## `optim()` and the Newton-Raphson alrogithm
+
+- The Newton-Raphson algorithm is a numerical optimization search
+    1. pick a starting point for your parameter estimates
+    2. look around for steepest slope (i.e. greatest improvement against our metric)
+    3. ski down that slope a bit
+    4. repeat
+    5. you're done when you can't get any lower
+- the `optim()` function does something conceptually similar for us
+    - we provide starting point: `c(0, 0)`
+    - we provide function to define distance between model and data: `measure_distance`
+    - we provide data: `sim1` 
+    - R does the rest (note: our grid search wasn't so bad!!)
+- Q: how might this algorithm possibly result in a misleading conclusion? 
+    - This doesn't usually happen, but you need to know it's a risk
+    - Q: Ideas to protect against this risk?
+
+```{r}
+nrBest <- optim(par = c(0, 0), fn = measure_distance, data = sim1)
+
+# show parameter estimates
+nrBest$par
+```
+
+## `lm()` for linear models
+
+- We had chosen "linear model" as our model family
+- The `lm()` function in R is very efficient for the linear model family
+    - family: $y = b_0 + b_1 * x_1 + b_2 * x_2 + b_3 * x_3 + ...$
+    - R syntax: `lm(Y ~ X1 + X2 + X3, data = DataSet)`
+    - `lm()` even fixes our problem with `optim()` to guarantee delivery of global minimum
+- Q: thoughts about our three approaches?
+    - random/grid search
+    - Newton-Raphson with `optim()`
+    - `lm()`
+    - (having fun? take STAT 440!)
+
+```{r}
+sim1_lm <- lm(y ~ x, data = sim1)
+sim1_lm$coefficients
+
+```
+
+
+## Quantifying uncertainty of our estimates
+
+- We now have point estimates, but that does little for us unless we understand the **uncertainty** of those estimates (e.g. standard error)
+    - `lm()` has this functionality built in for us 
+    - `confint()` is also very useful for interval estimates 
+    - Q: how could we achieve something similar using `optim()`?
+
+```{r}
+# confidence intervals
+confint(lm(y ~ 1, data = sim1))  # what does this do?
+confint(sim1_lm, level = 0.95)   # what does this do?
+
+# model summary table
+msummary(sim1_lm)
+```
+
+## Quantifying uncertainty of our estimates
+
+- Multiple approaches...
+- bootstrapping 
+    - sample with replacement from our data
+    - compute the estimates for each bootstrap sample
+    - calculate standard deviation of our bootstrap estimates to approximate the standard error
+- `lm()` takes advantage of some nice mathematical approximations
+    - IF the data conform to the assumptions required for those mathematical approximations, 
+        - `lm()` is convenient, accurate, and commonly used
+        - the bootstrap should deliver similar results, though
+    - IF the data do NOT conform to the assumptions, 
+        - you may need some more advanced skills to use `lm()` responsibly (take STAT 462)
+        - you should think about a different model family
+        - bootstrapping may or may not be useful depending on the issues at stake
+
+
+```{r}
+nrBest <- optim(par = c(0, 0), fn = measure_distance, data = sim1)
+nrBest$par
+
+# note the `$par` at end of `optim()`... try without to see why
+BootstrapModels <- 
+  mosaic::do(1000) * optim(par = c(0, 0), fn = measure_distance, 
+                           data = sample_n(sim1, size = nrow(sim1), replace = TRUE))$par
+head(BootstrapModels)
+
+# standard error 
+sd(~ V1, data = BootstrapModels) # intercept
+sd(~ V2, data = BootstrapModels) # slope
+
+# 95% CI (percentile method)
+qdata(~ V1, p = c(0.025, 0.975), data = BootstrapModels) # intercept
+qdata(~ V2, p = c(0.025, 0.975), data = BootstrapModels) # slope
+
+```
+
+#### Compare `lm()` result to Bootstrap 
+
+- Note Standard Error estimates for each coefficient
+- compare confidence interval estimates
+- Q: what if we run the simulation again?
+- Q: what if we run **more** bootstrap models?
+
+```{r}
+# recall our `lm()` model for comparison
+msummary(sim1_lm)
+confint(sim1_lm)
+
+```
+
+
+## Exercise: Mean Absolute Deviation
+
+- One weakness we are tolerating is a sensitivity to extreme observations
+- Consider Mean Absolute Deviation vs. Root-Mean-Square Deviation
+    - Q: Compare & contrast the two approaches
+    - Q: How could you fit a model that minimizes the MAD metric?
+        - use `sim1` data from `modelr` package?
+
+<!-- Day5 -->
+
+## Evaluating model fit
+
+- Our model essentially partitions the information (i.e. variability) in the data into two parts
+    1. structure that IS explained by the model (predictions)
+    2. randomness that IS NOT explained by the model (residuals or "errors")
+- Note: The popular R-squared statistic is a simple description of this partition
+
+
+## Model predictions
+
+- Regression could be described as "conditional expectation"
+- Let's consider sketching out our expectations, under various conditions...
+    - We want to use our model to calculated the expected value of Y at a bunch of different values of X
+    - We need a sequence of X values for our investigation using `modelr::data_grid()`
+    - We'll then calculate the expected value of Y (i.e. prediction) at each one using `modelr::add_predictions()`
+
+
+#### Initialize the grid
+
+```{r}
+grid <- 
+  sim1 %>%
+  data_grid(x)
+
+# just a bunch of evenly spaced hypothetical values for X...
+head(grid)
+
+```
+
+#### Add some predictions using our existing model (`sim1_lm`)
+
+```{r}
+grid <- 
+  grid %>%
+  add_predictions(sim1_lm)
+
+# predictions accompanying each hypothetical X value in our grid
+head(grid)
+```
+
+#### Plot it!
+
+- Admittedly, this isn't the most direct way to add a regression line to a plot (e.g., `geom_abline()`)
+- **The benefit**: this simple approach extends to just about **ANY** model in R (even complex models)
+- Your primary limitation now is visualization skills (NOT model complexity)
+
+```{r}
+# just the data
+ggplot(sim1, aes(x)) +
+  geom_point(aes(y = y))
+
+# add the grid of predictions to the data
+ggplot(sim1, aes(x)) +
+  geom_point(aes(y = y)) +
+  geom_point(aes(y = pred), data = grid, colour = "red", size = 3)
+
+# since the model family is linear... 
+ggplot(sim1, aes(x)) +
+  geom_point(aes(y = y)) +
+  geom_line(aes(y = pred), data = grid, colour = "red", size = 1)
+```
+
+## Residuals
+
+- **predictions** illustrate the variability in the data *captured* by the model
+- **residuals** tell you what the model couldn't capture/explain
+
+![](absErrorsR4DS.png)
+
+
+
+## Residuals
+
+- **predictions** illustrate the variability in the data *captured* by the model
+- **residuals** tell you what the model couldn't capture/explain
+- Q: what do we learn from this plot?
+
+```{r}
+sim1 <- 
+  sim1 %>%
+  add_predictions(sim1_lm) %>%
+  add_residuals(sim1_lm)
+
+# we've just appended the model residuals to our data set
+head(sim1)
+
+# Let's look at the distribution of residuals
+sim1 %>%
+  ggplot(aes(resid)) + 
+  geom_histogram(binwidth = 0.5)
+
+# or commonly with a density plot
+sim1 %>%
+  ggplot(aes(resid)) + 
+  geom_density()
+```
+
+#### Residuals vs X (our predictor variable)
+
+- Q: What do we learn here?
+
+```{r}
+sim1 %>%
+  ggplot(aes(x, resid)) + 
+  geom_hline(yintercept = 0, linetype = 2) + 
+  geom_point()
+```
+
+
+<!-- Pick up from R4DS 23.4.1: Model Families  -->
+
+## Formula syntax 
+
+- Models require that we use a formula syntax in R, for example `y ~ x1 + x2`
+    - Note: ` ~ y` is sometimes shorthand for `y ~ 1` (e.g., `mosaic` package)
+    - `y` is the outcome (response) variable of interest
+    - `x1` and `x2` are **explanatory** variables... possibly continuous OR categorical
+- Formula syntax is fairly self-evident when all variables are quantitative
+    - pretty similar to HS algebra
+    - `y ~ x` means $y = a + b*x$... a line in two dimensions
+    - `y ~ x1 + x2` means $y = a + b*x_1 + c*x_2$... a line in three dimensions
+    - `y ~ x + I(x^2)` means $y = a + b*x + c*x^2$... a quadratic
+- Things are less obvious when a **categorical** variable is involved
+    - `y ~ sex` where sex is either "male" or "female"...
+    - $y = a + b*(sex)$ doesn't make sense... sex isn't a number that can be multiplied
+    - R converts `sex` to an **indicator** variable: `sexmale` (or `sexfemale`)
+    - `sexmale` is 1 if `sex` is male, and 0 if `sex` is female
+    - `y ~ sex` becomes $y = a + b*sexmale$ and we're back in business
+- Q: why doesn't R create BOTH `sexmale` and `sexfemale`?
+- Q: why are these all still called "linear" models?
+
+## Modeling categorical variables
+
+- consider a new toy data set called `sim2`
+    - inspect structure & variables
+    - plot the data
+    - fit model with `lm()`
+    - generate predictions
+- Q: why are there 4 predictions, and not 40?
+
+```{r}
+# inspect data structures
+str(sim2)
+
+# show scatter plot of categorical `x` variable
+sim2 %>%
+  ggplot() + 
+  geom_point(aes(x, y))
+
+# fit a simple model and generate predictions again
+mod2 <- lm(y ~ x, data = sim2)
+
+grid <- 
+  sim2 %>% 
+  data_grid(x) %>% 
+  add_predictions(mod2)
+grid
+```
+
+
+## Modeling categorical variables
+
+- Q: Why does a model with categorical `x` will just predict the mean value for each category?
+- Q: What is our distance criterion for fitting the "best" model?
+
+
+```{r}
+sim2 %>%
+  ggplot(aes(x)) + 
+  geom_point(aes(y = y)) +
+  geom_point(data = grid, aes(y = pred), colour = "red", size = 4)
+```
+
+
+## Modeling with interactions 
+
+- sometimes we need to combine information about a quantitative & a categorical variable in the same model 
+- Interpretation: we can't explain the impact of **one** variable (x1) without considering **another** variable (x2)
+- toy example
+    - data: `sim3`
+    - note: I'm using slightly irregular syntax to clarify the point
+
+```{r}
+# inspect data structures
+str(sim3)
+
+# show scatter plot of categorical `x` variable
+sim3 %>%
+  ggplot() + 
+  geom_point(aes(x = x1, y = y, color = x2))
+
+# fit a simple model and generate predictions again
+mod3_1 <- lm(y ~ x1 + x2, data = sim3)
+mod3_2 <- lm(y ~ x1 + x2 + x1*x2, data = sim3)
+
+# generate model predictions
+grid <- 
+  sim3 %>% 
+  data_grid(x1, x2) %>% 
+  add_predictions(mod3_1, var = "mod1") %>%
+  add_predictions(mod3_2, var = "mod2")
+grid
+
+```
+
+#### Plot the interaction model
+
+- we should stack (i.e. gather) the predictions so we can make the model comparisons on the same plot
+- Q: What's happening here? recall...
+    - `mod3_1 <- lm(y ~ x1 + x2, data = sim3)`
+    - `mod3_2 <- lm(y ~ x1 + x2 + x1*x2, data = sim3)`
+    - interpretation of **interaction**
+
+
+```{r}
+gridStack <- 
+  grid %>%
+  gather(key = "model", value = "pred", mod1, mod2)
+
+# model plot
+sim3 %>%
+  ggplot(aes(x = x1, y = y, color = x2)) + 
+  geom_point() + 
+  geom_line(data = gridStack, aes(y = pred)) + 
+  facet_wrap(~ model)
+
+# same model, but facets separate each model & x2 combination
+sim3 %>%
+  ggplot(aes(x = x1, y = y, color = x2)) + 
+  geom_point() + 
+  geom_line(data = gridStack, aes(y = pred)) + 
+  facet_grid(model ~ x2)
+```
+
+#### Write down each model
+
+- many people understand the interaction better by writing down the models
+- here's the model output so we can work them out
+
+```{r}
+summary(mod3_1)
+summary(mod3_2)
+```
+
+<!-- Day6 -->
+
+## Plot the model (`mosaic::plotModel()`)
+
+- note: for simpler model forms, there are good functions to help (e.g., `mosaic` package)
+- same models as before:
+    - `mod3_1 <- lm(y ~ x1 + x2, data = sim3)`
+    - `mod3_2 <- lm(y ~ x1 + x2 + x1*x2, data = sim3)`
+- `mplot()` is a pretty handy function 
+    - **console**: `mplot(sim1)` opens interactive graph-builder to get started with EDA
+    - **regression**: `mplot(modelFit)` produces a few common residual plots 
+        - choose a single plot with `mplot(modelFit, which = 1)` 
+        - four-pack of common plots with `mplot(modelFit)`
+        - other options available
+
+```{r}
+# reproduce our model plots
+plotModel(mod3_1)  # no interaction (parallel lines)
+plotModel(mod3_2)  # interaction    (non-parallel...slope can vary by group)
+
+# residuals vs fitted values
+mplot(mod3_1, which = 1)
+mplot(mod3_2, which = 1)
+
+# what's this?
+mplot(mod3_2, which = 7)
+```
+
+
+
+## Interactions (continuous:continuous)
+
+- Recall: Continuous:Categorical interaction allows different slope & intercept depending on the value of categorical variable
+- Similarly: Continuous:Continuous interaction allows different slope & intercept depending on the value of the other continuous variable.
+    - Think of a twisted piece of graph paper... every combination of X1:X2 is still linear, but the slopes and intercepts vary
+    - Sometimes plotted as 3D wire diagrams (like the graph paper idea)
+    - Often plotted as 2D heat map or contour plot
+
+![image credit: https://blogs.uoregon.edu/rclub/2016/10/05/looking-at-interactions-of-continuous-variables/](interaction.png)
+
+
+
+## Oridinary Least Squares (OLS) Regression Summary
+
+- Linear relationships are very convenient for interpret and understand
+- Multiple regression is a great tool for attacking lots of interesting questions
+- The assumptions are pretty straight-forward (L-I-N-E)
+    - **L**inear relationship between the mean response (Y) and each explanatory variable (X)
+    - observations are **I**ndependent
+    - responses are **N**ormally distributed at each level of X
+    - variance of the response is **E**qual for all levels of X
+
+![](OLS-model.png)
+
+## OLS Regression Fail
+
+**Problem: lots of interesting questions can't be answered by data that satisfy those conditions.**
+
+Consider a couple of examples: 
+
+- **Grades & Studying**
+- Is the time spent studying predictive of success on an exam?  The time spent studying for an exam (in hours) and result (pass/fail) are recorded for randomly selected students.
+
+>- since the objective is ultimately to associate the probability of success, $p$, with the covariates, one might be tempted to try a linear model for the average binary response, $p$: $p_{i} = \beta_{0} + \beta_{1}x_{i}$
+>- Q: What's the **OLS violation**? 
+>- e.g., the response variable is binary, which violates the OLS assumption of a normally distributed response at each level of X
+>- Result: $p_{i} = \beta_{0} + \beta_{1}x_{i}$ doesn't work well for bernoulli/binomial response
+>- ![Binomial Regression](binomial-model.png)
+
+
+## OLS Regression Fail
+
+**Problem: lots of interesting questions can't be answered by data that satisfy those conditions.**
+
+Consider a couple of examples: 
+
+- **ER Visits & Pollution**: 
+- Is the number of asthma-related visits to a hospital Emergency Room associated with the air quality index for the day?  The total number of ER patients (count) and the air quality index (continuous measurement)
+
+>- one might be tempted to try and model $\lambda_{i}$ as a linear function of the explanatory variable: $\lambda_{i} = \beta_{0} + \beta_{1}x_{i}$
+>- Q: What's the **OLS violation**?
+>- e.g., the response variable is Poisson so we expect that mean = variance = $\lambda$, which violates the OLS assumption of equal variance for all levels of X
+>- Result: $\lambda_{i} = \beta_{0} + \beta_{1}x_{i}$ doesn't work well for Poisson response
+>- ![Poisson Regression](poisson-model.png)
+
+
+## OLS Regression Fail
+
+| Researchers | Interests  | Variable Type | 
+|:------------|:-----------|:--------------|
+| Ecologists: | Number of Species | Poisson |
+| Criminologists: | Arrest Count | Poisson |
+| Cancer specialist: | Number of cases | Poisson |
+| Political Scientists: | Who’s a democrate? | Bernoulli or Binomial | 
+| Pre-med Student: | Who gets into med school?  | Bernoulli or Binomial |
+| Sociologist: | Who’s got a tattoo? | Bernoulli or Binomial | 
+
+
+## Generalized Linear Models (GLMs)
+
+### One-parameter exponential family 
+
+- In the early 1970s Nelder & Wedderburn identified a broader class of models that generalizes the multiple linear regression approach under certain conditions: 
+    1. The probability formula (pdf or pmf) can be written as follows:
+    
+    \[f(y; \theta)=exp^{(a(y)b(\theta) + c(\theta) + d(y))}\]
+    
+    2. the set of possible values (i.e. the support) does not depend upon a parameter
+
+- If so, it is said to have **one-parameter exponential family form**... 
+
+<br>
+
+### ...Here's the cool part 
+
+>- $\mu = -\frac{c'(\theta)}{b'(\theta)}$
+
+>- $\sigma^2 = \frac{b''(\theta)c'(\theta) - c''(\theta)b'(\theta)}{[b'(\theta)]^3}$
+
+>- (drum roll...)
+
+>- $b(\theta) = \beta_0 + \beta_1X + ...$ is a **linear** model!
+
+>- $b(\theta)$ is called the **canonical link** function, meaning it's often a good choice to model as a **linear** function of the explanatory variables (but other link functions exist and might be preferred under special circumstances).
+
+## GLM gut-check (Poisson)
+
+### Goal:
+
+\[f(y; \theta)=exp^{(a(y)b(\theta) + c(\theta) + d(y))}\]
+
+**What if our response variable is...**
+
+### Poisson?
+
+- support: since possible values for any Poisson random variable range from $0$ to $\infty$, the support doesn't depend on $\lambda$
+- $P(Y=y) = \frac{e^{-\lambda}\lambda^y}{y!}$
+- since $\lambda^y = e^{ylog(\lambda)}$
+- $P(Y=y) = e^{-\lambda}e^{ylog(\lambda)}e^{-log(y!)}$
+- $P(Y=y) = e^{ylog(\lambda) - \lambda - log(y!)}$
+- then, $b(\theta) = log(\lambda)$
+
+## GLM gut-check (Binomial)
+
+### Goal:
+
+\[f(y; \theta)=exp^{(a(y)b(\theta) + c(\theta) + d(y))}\]
+
+**What if our response variable is...**
+
+### Binomial?
+
+- support: for any value of $p$, $0 < p < 1$, all integer values from 0 to $n$ are possible so the support doesn't depend on $p$.
+- $P(Y=y) = {n\choose{y}}p^y(1-p)^{n-y}$
+- $P(Y=y) = e^{ylog(p) + (n-y)log(1-p) + log{n\choose{y}}}$
+- $P(Y=y) = e^{ylog(\frac{p}{1-p}) + nlog(1-p) + log{n\choose{y}}}$
+- then, $b(\theta) = log(\frac{p}{1-p})$
+- this is called a **logit** function, and it is interpreted as the log of the odds of "success" where the observed outcome is deemed either "success" or "failure" 
+
+
+## GLM gut-check (Normal)
+
+### Goal:
+
+\[f(y; \theta)=exp^{(a(y)b(\theta) + c(\theta) + d(y))}\]
+
+**What if our response variable is...**
+
+### ...Normal?
+
+- $f(y) = \frac{1}{\sigma\sqrt(2\pi)}e^{-\frac{(y - \mu)^2}{2\sigma^2}}$
+
+>- $f(y) = e^{-log(\sigma)-log(2\pi)/2}e^{-\frac{(y - \mu)^2}{2\sigma^2}}$
+>- not looking good for our hero, but don't panic... what if we assume $\sigma$ is known (i.e. constant)?
+>- $f(y) \propto e^{-(-2y\mu + \mu^2 + y^2)}$
+>- then, $b(\theta) = \mu$
+>- so, $\mu_{Y|X} = \beta_{0} + \beta_{1}X$
+>- and, of course, possible values for any Normal random variable range from $-\infty$ to $\infty$, so the support looks good!
+>- Does this square with what you already know about multiple regression with a Normal response?
+
+## Who's in the family?
+
+Here are some other distributions that can be written in one-parameter exponential family form: 
+
+- Bernoulli
+- Binomial
+- Poisson
+- Normal
+- Exponential
+- Gamma
+- Geometric
+- Negative Binomial
+- and some others that aren't as common
+
+
+## Poisson Regression
+
+- One-page summary of BYSH Chapter 4
+- Poisson Regression Assumptions (L-M=V-I? ...not as catchy): 
+    - **Linearity**: the log of the mean rate $log(\lambda_{i})$ must be a linear function of x
+    - **Mean = Variance** by definition because it's Poisson
+    - **Independence**
+- If the response throws you a curveball like overdispersion or too many zeroes there are sensible adjustments available
+    - Accounting for overdispersion (BYSH, p. 80)
+    - Zero-inflated Poisson (ZIP) model (BYSH, p. 84)
+- in R: 
+    - `glm(Y ~ X, family = poisson)`
+    - note: **glm** function and not the old **lm**
+- interpreting coefficient $\beta_{1}$ 
+    - since $log(\lambda_{X}) = \beta_{0} + \beta_{1}X$
+    - then, $e^{\beta_{1}X} = \frac{\lambda_{X + 1}}{\lambda_{X}}$ (this is called a "rate ratio" or sometimes "relative risk")
+    - generically, the mean response changes by a factor of $e^{\beta_{1}}$ with each unit increase in X.  For example, if $e^{\beta_{1}} = 0.87$ you describe it as a 13% decrease, and if $e^{\beta_{1}} = 5.3$ the mean response is 5.3 times (crudely, 530%) higher.
+
+## Logistic Regression
+
+- One-page summary of BYSH Chapter 6
+- Binomial Regression Assumptions: 
+    - Binomial response is a sum of $n$ Bernoulli trials
+    - Trials are independent
+    - $n$ is fixed (note: $n = 1$ is fine)
+    - $p$ is the same for all trials
+- Overdispersion adjustment (BYSH, p. 114)
+- in R: 
+    - `glm(Y ~ X, family = binomial)`
+    - note: **glm** function and not the old **lm**
+- interpreting coefficient $\beta_{1}$ 
+    - since $log(\frac{p}{1-p}) = \beta_{0} + \beta_{1}X$
+    - then, $e^{\beta_{1}} = \frac{p_{1}/(1-p_{1})}{p_{0}/(1-p_{0})}$ (this is an odds ratio)
+    - also, $p = \frac{e^{\beta_{0}} + e^{\beta_{1}X}}{1 + e^{\beta_{0}} + e^{\beta_{1}X}}$  (that's the probability of "success" given X)
+    - generically, the odds of "success" change by a factor of $e^{\beta_{1}}$ with each unit increase in X.  For example, if $e^{\beta_{1}} = 0.10$ the odds have decreased by 90%, and if $e^{\beta_{1}} = 10.0$ the odds of "success" are 10 times (crudely, 1000%) higher.
+
+
+## One last time... Back to Chris
+
+![](chris.png)
+
+- What if we decide to approach the slight delay differently...
+- Maybe what's really important to Chris is whether or not the flight *departs* on time (within 10 minutes)
+    - If the plane *leaves* on-time and then arrival is delayed by some problem at the destination, perhaps the client would be understanding.
+    - Response: `timelyDepart` coded {TRUE; FALSE} is **binary**
+    - Explanatory Variables: `hour` of the day; `dow` day of the week
+
+
+```{r}
+require(lubridate)
+# some minor wrangling (what are we doing here?)
+OrdColleagueData <- 
+  OrdColleagueData %>%
+  mutate(timelyDepart = if_else(dep_delay < 10, TRUE, FALSE), 
+         date = ymd(paste0(year, "-", month, "-", day)),
+         dow = as.character(wday(date, label = TRUE)))
+
+```
+
+## Plot the relationship
+
+- Let's look at on-time departure status by hour of the day for our data
+
+```{r}
+OrdColleagueData %>%
+  filter(!is.na(timelyDepart)) %>%
+  ggplot(aes(x = hour, y = as.numeric(timelyDepart))) + 
+  geom_jitter(alpha = 0.3, height = 0.05) + 
+  geom_smooth(method = "glm", method.args = list(family = "binomial"), se = 0) +
+  ylab("On-Time Departure Status")
+```
+
+
+## Logistic Regression Modeling
+
+- Again, we should write down the model to be sure we understand it...
+- note about dispersion and "quasibinomial"
+
+```{r}
+logitMod <- glm(timelyDepart ~ hour + dow, family = "binomial", 
+                data = OrdColleagueData)
+msummary(logitMod)
+confint(logitMod)
+```
+
+
+
+## Other model families
+
+- Once you’ve mastered linear models, it's easy to learn the mechanics of other model classes: 
+    - **Generalised linear models** (GLM; `stats::glm()`): use a statistical idea called "likelihood" to accommodate either a continuous **or non-continuous response variable** (e.g. binary, binomial, or counts)
+    - **Generalised additive models** (GAM; `mgcv::gam()`): extend GLM to incorporate arbitrary smooth functions
+    - Penalized linear models (e.g., Lasso; `glmnet::glmnet()`): add a penalty term to the distance metric in roder to reduce model complexity in an attempt to produce models that generalize better to new (out-of-sample) datasets from the same population
+    - Robust linear models (`MASS::rlm()`): tweak the distance metric to be less sensitive to outliers, at the cost of being not quite as efficient when there are no outliers.
+    - Trees (e.g. CART; `rpart::rpart()`): uses recursive partitioning to fit a piece-wise constant model, splitting the data into progressively smaller and smaller pieces.  
+        - Most effective when used in aggregate
+        - random forests (`randomForest::randomForest()`)
+        - gradient boosting machines (`xgboost::xgboost()`)
+
+

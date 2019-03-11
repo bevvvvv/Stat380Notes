@@ -1,0 +1,1112 @@
+---
+title: "MDSR Ch 8: Supervised Learning"
+output: 
+  slidy_presentation: default
+  html_notebook: default  
+---
+
+
+
+```{r Front Matter, echo=TRUE, message=FALSE, warning=FALSE, include=FALSE}
+# clean up R environment
+rm(list = ls())
+
+# global options
+knitr::opts_chunk$set(eval=TRUE, include=TRUE)
+options(digits=4)
+
+# packages used
+library(mdsr)
+library(tidyverse)
+library(modelr)
+library(rpart)
+library(partykit)
+library(randomForest)
+library(gbm)
+library(tibble)
+library(class)
+library(e1071)
+library(nnet)
+library(ROCR)
+library(SuperLearner)
+
+# user-defined functions 
+
+knn_error_rate <- function(x, y, numNeighbors, z = x) {
+  # purpose: fit knn classifier and return proportion of misclassifications
+  # inputs: 
+  ### x: training data
+  ### y: true classifcations from data
+  ### numNeighbors: number of nearest neighbors for classifier
+  ### z: test data (default to training data)
+  y_hat <- knn(train = x, test = z, cl = y, k = numNeighbors)
+  return(sum(y_hat != y) / nrow(x))
+}
+
+get_roc <- function(x, y) {
+  # purpose: extract true-positive rate & false-positive rate for arbitrary classifier model
+  # inputs: 
+  ### x: (pre-processed) data frame with two columns--(1) `model` name and (2) `y_hat` for test predictions
+  ### y: response vector from test set
+  pred <- ROCR::prediction(x$y_hat, y)
+  perf <- ROCR::performance(pred, 'tpr', 'fpr')
+  perf_df <- data.frame(perf@x.values, perf@y.values)  # @ notation is unusual (S4 object)
+  names(perf_df) <- c("fpr", "tpr")
+  return(perf_df)
+}
+
+
+# inputs summary
+data("HELPrct")
+
+```
+
+
+## Announcements
+
+- Ch 8 & Ch 9 exercises assigned (due 2/24)
+- midterm exam plan
+    - mix of in-class and take-home
+    - written, in-class portion on Wed 2/27
+    - take-home portion due Fri 3/1 at 11:59pm
+    - class will not meet on Friday 3/1 
+- Ch 8 programming notebook assigned
+- Census Modeling mini-project assigned
+    - watch out for recent changes to Census wikipedia page 
+
+#### MDSR Ch 8 Errata / Tips
+
+- p. 177: include the code chunk at the bottom of the page
+    - there's no error, but you need to run the `plot` and `text` functions together
+    - note: the resulting tree is NOT printed in the MDSR book
+- p. 179: watch out for the leading spaces in `relationship` and `education`
+- p. 200: use `mtry = 2`  # MDSR book says mtry = 3, think about why 3 doesn't work...
+
+
+## Statistical Learning
+
+- statistical learning refers to a set of approaches for estimating the systematic information that X's (explanatory variables) provide about Y (response variable)
+- Typical distinction between **Supervised** and **Unsupervised** learning
+    - **Supervised** learning predictive or inferential modeling
+        - there is a response variable (Y)
+        - predictive modeling: we want to anticipate the response (Y) ahead of time based on knowledge of a set of measurable inputs (X's)
+        - inferential modeling: we want to understand the way our response (Y) changes as the explanatory variables (X's) change
+        - examples: linear regression & logistic regression are classical examples (we'll meet others)
+    - **Unsupervised** learning methods could be considered "data discovery" models 
+        - there is NO response variable (Y)
+        - we are interested in exposing interesting relationships/groups/clusters among several explanatory variables (X's)
+
+
+## Regression vs Classification
+
+- there's also a tendency to make distinctions among approaches based on the type of the response (Y) variable
+    - **Regression** problems frequently involve to Quantitative/Continuous response
+    - **Classification** problems frequently involve to Categorical/Qualitative response
+- there are certainly exeptions...
+    - some methods can be reasonably interpreted in both ways
+    - some methods (e.g., K-nearest neighbors) can be used with either quantitative and categorical response
+
+## Health Evaluation and Linkage to Primary Care Study
+
+**RQ: What risk factors are associated with serious thoughts of suicide?**
+
+
+#### `HELPstudy` Data
+
+- The HELP study was a randomized controlled clinical trial for adult inpatients with a history of susbstance abuse.  Participants were recruited from a detoxification unit in the Boston area. 
+- Inclusion critera: 
+    - adults, 
+    - Spanish or English language proficiency
+    - reported alcohol, heroin, or cocaine as their first or second drug of choice
+    - resided in proximity to the primary care clinic to which they would be referred or were homeless. 
+- Exclusion criteria: 
+    - Patients with established primary care relationships they planned to continue
+    - significant dementia
+    - specific plans to leave the Boston area that would prevent research participation
+    - failure to provide contact information for tracking purposes
+    - pregnancy
+- Procedure: 
+    - Patients with no primary care physician were randomized to receive a multidisciplinary assessment and a brief motivational intervention or usual care, with the goal of linking them to primary medical care.
+    - Subjects were interviewed at baseline during their detoxification stay
+    - follow-up interviews were undertaken every 6 months for 2 years. 
+    - A variety of continuous, count, discrete, and survival time predictors and outcomes were collected at each of these five occasions.
+
+#### Variables of interest
+
+- **`suicide` (response; {"no", "yes"})**: experienced serious thoughts of suicide in last 30 days (measured at baseline)
+- `cesd`: Center for Epidemiologic Studies Depression measure at baseline (high scores indicate more depressive symptoms)
+- `sex`: male or female
+- `avgAlcohol`: average number of drinks (standard units) consumed per day, in the past 30 days (measured at baseline)
+- `pss_fr`: perceived social support by friends (measured at baseline, higher scores indicate more support)
+- `treat` randomized to HELP clinic: no yes
+
+
+```{r}
+HELPstudy <- 
+  HELPrct %>%
+  select(suicide = g1b, age, cesd, sex, avgAlcohol = i1, pss_fr)
+
+# inspect data
+glimpse(HELPstudy)
+```
+
+
+
+
+## Data Preparation
+
+- Training, (query), and test sets
+- Q: Why partition the data this way?
+    - explain how the code accomplishes this
+
+
+```{r}
+
+# set RNG seed for reproducible results
+set.seed(538) 
+
+# partition the data
+n <- nrow(HELPstudy)
+test_idx <- sample.int(n, size = round(0.25 * n)) # select row numbers for the test set
+train <- HELPstudy[-test_idx, ]  # exclude the test set cases
+nrow(train)
+
+test <- HELPstudy[test_idx, ]    # test set cases only
+nrow(test)
+```
+
+
+
+## Training & Test sets
+
+- if our goal is prediction or inference we need to be disciplined
+    1. Each observation can either be used for exploration or confirmation, not both.
+    2. You can use a case as often as you like for exploration, but **only once** for confirmation. 
+- **As soon as you use an observation twice, you’ve switched from confirmation to exploration. NO CHEATING.**
+    - we'll only use the training data (`train`) for model building
+    - we want to preserve the integrity of the `test` set as a means to validate model accuracy
+    - we didn't use a "query" set here
+- the **real** test of your model is it's out-of-sample performance
+    - this is what we want the test set for
+    - if your out of sample performance is **bad** you might want to fix it and try again... but you're sort of stuck (see #2)
+    - this is where the "query" set may come in handy... it provides a practice data set for out of sample performance without jeopardizing the integrity of the test set
+
+
+## Inspecting the `HELPstudy` (training) data
+
+- we're cutting EDA to the bone to be economical with lecture time & slides, but you need to do a careful EDA of your data before you start modeling.  
+- careful EDA in the beginning will save you headaches & wasted time later
+- you should also to plot your data several ways 
+    - try and come as close as possible to answering your research question 
+    - try and expose issues in the data that will impact modeling decisions
+
+
+```{r fig.height=10, fig.width=10}
+# short (insufficient) EDA
+tally(~ suicide, data = train)
+favstats(~ age, data = train)
+favstats(~ cesd, data = train)
+tally(~ sex, data = train)
+favstats(~ avgAlcohol, data = train)
+favstats(~ pss_fr, data = train)
+
+# single plot; ugly, but possibly useful (you can do better)
+pairs(train)
+```
+
+
+## Null model
+
+- this establishes a useful baseline
+- with no other information at all, we would be correct about 72% of the time by just assuming that none of these people ever had serious thoughts of suicide.
+
+```{r}
+mod_null <- tally(~ suicide, data = train, format = "percent")
+mod_null
+```
+
+
+## Decision Trees
+
+- **CART**: classification and regression trees
+- tree-like flow chart that assigns class labels to individual observations
+- number of possible trees grows exponentially as number of X's increases
+- we'll use **recursive partitioning** to produce increasingly "pure" subsets
+
+![credit: <https://newonlinecourses.science.psu.edu/stat555/node/100/>](recursivePartitions.png)
+
+## Decision tree (simple)
+
+- consider a simple tree that predicts `suicide` from just `cesd` (a depression score)
+- the tree shows successive partitioning to produce increasingly pure subsets
+
+```{r}
+require(rpart)
+rpart(suicide ~ cesd, data = train)
+```
+
+#### visualize first split for depression & suicide ideation model
+
+- clearly not perfect...
+    - depression scores lower than the split are more confidently classified as "no"
+    - above the split is still very hard to tell
+    - Q: So, is this single cut score **useful**?
+
+```{r}
+split <- 34.5 # first split from simple `rpart`
+train %>%
+  mutate(elevated_depression = cesd >= split) %>%
+  ggplot(aes(x = cesd, y = suicide)) + 
+  geom_point(aes(color = elevated_depression), 
+             position = position_jitter(width = 0, height = 0.15), 
+             alpha = 0.4) + 
+  geom_vline(xintercept = split, color = "blue", lty = 2)
+```
+
+## Decision tree (complete)
+
+- we're going to reuse the model formula a lot, so MDSR stores the formula `form`
+    - `form <- as.formula("suicide ~ age + cesd + sex + avgAlcohol + pss_fr")`
+    - this is identical to `suicide ~ . ` since we're using all the variables in `train`
+
+
+```{r}
+mod_tree <- rpart(suicide ~ ., data = train)
+mod_tree
+```
+
+## Decision tree (partykit)
+
+```{r fig.height=10, fig.width=10}
+require(partykit)
+plot(as.party(mod_tree))
+```
+
+<!-- Day2 -->
+
+## Branching and pruning 
+
+- the algorithm considers *many* possible splits (new branches), but prunes them if they don't sufficiently improve the predictive power of the model (i.e. bear fruit) 
+- a **complexity parameter** is used to control whether to keep or prune possible splits
+- `printcp` prints a table of optimal prunings based on the complexity parameter
+
+```{r}
+printcp(mod_tree)
+```
+
+
+## Model accuracy: Confusion matrix
+
+```{r}
+train_tree <- 
+  train %>%
+  mutate(suicide_dtree = predict(mod_tree, type = "class"))
+
+confusion <- tally(suicide_dtree ~ suicide, data = train_tree, format = "count")
+confusion
+
+```
+
+- it's important to scrutinize the outcomes predicted by the model against outcomes observed in the data
+- in this way, the response variable "supervises" our model
+- confusion matrix is a simple, but useful, tool for this purpose
+    - each type of classification and misclassification is represented
+    - model **accuracy**: correct / total
+    - model **sensitivity** is the true positive rate
+    - model **specificity** is the true negative rate
+- Q: How do we know if it's any good though?
+
+```{r}
+# decision tree model accuracy
+dtree_acc <- sum(diag(confusion)) / nrow(train) * 100
+dtree_acc
+```
+
+
+## Changing the control parameter
+
+- Q: What do you think happens if we change the control parameter?
+    - will the model will be more & less complex?
+    - which do you think the model will be more "accurate"?
+
+```{r}
+# different control parameter for comparison
+mod_tree2 <- rpart(suicide ~ ., data = train, control = rpart.control(cp = 0.03))
+
+
+plot(as.party(mod_tree2))
+
+train_tree2 <- 
+  train %>%
+  mutate(suicide_dtree = predict(mod_tree2, type = "class"))
+
+confusion <- tally(suicide_dtree ~ suicide, data = train_tree2, format = "count")
+confusion
+
+sum(diag(confusion)) / nrow(train) * 100
+
+
+```
+
+## Optimal decision tree
+
+- Hayafil & Rivest (1976) proved that an efficient algorithm to determine the optimal decision tree almost certainly does not exist 
+    - decision tree optimization is NP-complete
+    - NP: result can be checked quickly with an algorithm (e.g., polynomial time)
+    - P: problems that can be solved quickly with an algorithm (e.g., polynomial time) 
+    - some problems seem to be easy to check (NP) but NOT necessarily easy to solve (P), like Sudoku puzzles
+    - P vs NP: are all problems in NP also in P?  
+    - most computer scientists suspect $P \ne NP$, but it hasn't been proven (yet)
+    - there's a handsome bounty if **either way** is proven
+        - Millenium Prize problems
+        - one of seven open problems with $1 million (US) reward for solution!
+        - one prize has already been claimed, so act now while supplies last!
+
+- Q: Any ideas how we can improve results for our tree? 
+
+
+## Forests
+
+- a forest is a collection of trees[citation needed].
+
+![](forest.png)
+
+## Random Forests
+
+- a random forest is a collection of decision trees.
+- we more or less bootstrap the decision trees and defer to the majority
+- procedure: 
+    0. choose number of trees to "grow" (`ntree` argument) AND the number of variables to consider in each tree (`mtry` argument)
+    1. sample the cases in the data **with replacement**
+    2. randomly select `mtry` of the explanatory variables at each split
+    3. build (grow?) a decision tree on the resulting data
+    4. repeat `ntree` times
+- this bootstrap aggregration is sometimes called **bagging**
+- predictions are based on majority rule from all the trees in the forest
+    - `ntree` shouldn't be too small... but can be computationally intensive
+    - `mtry` defaults to $\sqrt{p}$ for classification trees and $p / 3$ for regression trees
+
+```{r}
+require(randomForest)
+
+mod_forest <- randomForest(suicide ~ ., data = train, ntree = 2000, mtry = 2)
+mod_forest
+
+# note the built-in confusion matrix
+rf_acc <- sum(diag(mod_forest$confusion)) / nrow(train) * 100
+rf_acc
+
+```
+
+## Bagging
+
+- **Bagging**
+    - Procedure: 
+        - create multiple copies of the original training data set using the bootstrap
+        - fit a separate decision tree to each copy
+        - combine all of the trees in order to create a single predictive model
+    - on average, each bagged tree only makes use of about 2/3 of the training data
+    - out-of-bag (OOB) error is like a free query set based on predictions of the samples NOT chosen for a particular tree
+- selecting a random subset of the **variables** is an improvement of random forests over bagged trees in general in order to decorrelate the trees
+
+
+## Random Forests (importance)
+
+- **importance** is a metric useful to assess which variables are consistently influential
+- not as formal as a p-value for significance
+    - depression score (`cesd`) appears most important
+    - `sex` least important
+    - other variables somewhere in between
+- the **Gini coefficient** measures the purity of a set of candidate child notes
+
+```{r}
+require(tibble)
+importance(mod_forest) %>%
+  as.data.frame() %>%
+  rownames_to_column() %>%  # handy function from `tibble` package
+  arrange(desc(MeanDecreaseGini))
+```
+
+## Boosting
+
+- Boosting works similar to bagging, except trees are grown **sequentially**: each tree is grown using information from previously grown trees. 
+- Boosting does not involve bootstrap sampling; each tree is fit on a modified version of the original data set
+- Boosting *learns slowly* by prioritizing the **hard** examples that were fit poorly in the previous model
+- Because the growth of a particular tree takes into account the other trees that have already been grown, smaller
+trees are typically sufficient and aids in interpretability.
+
+
+```{r}
+require(gbm)
+
+# response must be converted to 0/1
+train_boost <- 
+  train %>%
+  mutate(suicide01 = if_else(suicide == "yes", 1, 0)) %>%
+  select(-suicide)
+
+mod_boost <- gbm(suicide01 ~ ., distribution = "bernoulli",   # because it's a classifier model
+                     data = train_boost, n.trees = 3000, interaction.depth = 2) 
+
+# the relative influence is similar to importance result earlier
+msummary(mod_boost)
+
+```
+
+
+
+## K-Nearest Neighbor
+
+- simple method that attempts to predict without constructing a "model" 
+- procedure: 
+    - calculate the **distance** between pairs of points in the *p*-dimensional space (defined by our *p* explanatory variables)
+    - nearest neighbor classifiers simply assume that observations that are "close" to one another probably have similar outcomes (class membership).
+- we'll use Euclidean distance, but this means we can only use quantitative variables (we have to drop `sex`)
+
+
+![image credit: James et al (2013) <http://www-bcf.usc.edu/~gareth/ISL/>](knn.png)
+
+## KNN classifier
+
+- KNN classifiers don't need to process the training data first, it can happen on the fly
+    - they're fast & easy to understand
+    - can be adversely impacted if a wider scale of one variable dwarfs a narrow scale of another variable in the distance calculation
+- we'll restrict to the training data (only) because we still don't want to look at the test set yet
+- note: `cl = train$suicide` as the supervising variable (from `train`, not `train_quant`)
+
+```{r}
+require(class)
+train_quant <- 
+  train %>%
+  select(age, cesd, avgAlcohol, pss_fr)
+
+# KNN classifier
+suicide_knn <- knn(train = train_quant, test = train_quant, cl = train$suicide, k = 5)
+
+# confusion matrix
+confusion <- tally(suicide_knn ~ suicide, data = train, format = "count")
+confusion
+
+knn_acc <- sum(diag(confusion)) / nrow(train) * 100
+knn_acc
+```
+
+
+## How (not) to choose k?
+
+- Q: what's wrong with this picture?
+    - which value of "k" has the best performance?
+
+```{r}
+knn_error_rate <- function(x, y, numNeighbors, z = x) {
+  # purpose: fit knn classifier and return proportion of misclassifications
+  # inputs: 
+  ### x: training data
+  ### y: true classifcations from data
+  ### numNeighbors: number of nearest neighbors for classifier
+  ### z: test data (default to training data)
+  y_hat <- knn(train = x, test = z, cl = y, k = numNeighbors)
+  return(sum(y_hat != y) / nrow(x))
+}
+
+ks <- c(1:15, 20, 25, 30, 40, 50)
+train_rates <- sapply(ks, FUN = knn_error_rate, x = train_quant, y = train$suicide)
+knn_error_rates <- data.frame(k = ks, 
+                              train_rate = train_rates)
+
+knn_error_rates %>%
+  ggplot(aes(x = k, y = train_rate)) + 
+  geom_point() + 
+  geom_line() + 
+  ylab("Misclassification Rate")
+```
+
+
+## choice of k
+
+- Q: how would you characterize performance of each model?
+    - we have two quantitative variables and a binary response (orange; blue)
+    - the dashed line is optimal
+    - the training data plotted
+    - left side shows K = 1; right side K = 100
+    - color shows predictions for each KNN classifier in the data space 
+
+![image credit: James et al (2013) <http://www-bcf.usc.edu/~gareth/ISL/>](knn2.png)
+
+<!-- Day3 -->
+
+## Naive Bayes
+
+- aliases
+    - independence Bayes
+    - simple Bayes
+- Naive?
+    - due to possibly simplistic assumption that explanatory variables are conditionally independent
+    - **conditional independence**: $X_1$ and $X_2$ are conditionally independent given $Y$ if, $P(X_1 | X_2 Y) = P(E_1 | Y)$ or equivalently $P(X_1 X_2 | Y) = P(X_1 | Y) P(X_2 | Y)$
+    - conditional independence means the two explanatory variables are independent given knowledge of $Y$, but this doesn't necessarily mean they are independent of one another (or uncorrelated)
+    - see STAT 318/414 for more on conditional independence
+- "BINO"?
+
+#### Bayes Theorem: 
+
+$$\text{Pr}(y|x) = \frac{\text{Pr}(xy)}{\text{Pr}(x)} = \frac{\text{Pr}(x|y)\text{Pr}(y)}{\text{Pr}(x)}$$
+
+## *P*(`suicide` = "yes" | `sex` = "male")
+
+$$\text{Pr}(y|x) = \frac{\text{Pr}(xy)}{\text{Pr}(x)} = \frac{\text{Pr}(x|y)\text{Pr}(y)}{\text{Pr}(x)}$$
+
+- consider the first person in our training set
+- let's calculate $P(\text{suicide} | \text{male})$, then 
+    - $y$ is `suicide == "yes"`
+    - $x$ is `sex == "male"`
+
+```{r}
+head(train, 1)
+tally(sex ~ suicide, data = train, margins = TRUE)
+tally( ~ sex, data = train, margins = TRUE)
+tally( ~ suicide, data = train, margins = TRUE)
+```
+
+#### *P*(`suicide` = "yes" | `sex` = "male")
+
+$$P(\text{suicide} | \text{male}) = \frac{P(\text{male}|\text{suicide})P(\text{suicide})}{P(\text{male})} = \frac{(61/93)(93/340)}{(255/340)} = \frac{0.18}{0.75} = 0.24$$
+
+- For those in HELPrct population, the probability of serious thoughts of suicide given (only) that the person is male is 0.24  
+- This only allowed us to take one variable (`sex`) into consideration  
+- a Naive Bayes classifier extends to additional variables by assuming conditional independence  
+
+
+## Naive Bayes 
+
+- Q: How did we do?
+
+```{r}
+require(e1071)  # awful name for a package...
+
+mod_nb <- naiveBayes(suicide ~ ., data = train)
+suicide_nb <- predict(mod_nb, newdata = train)
+confusion <- tally(suicide_nb ~ suicide, data = train, format = "count")
+confusion
+
+nb_acc <- sum(diag(confusion)) / nrow(train) * 100
+nb_acc
+```
+
+## Artificial Neural Networks
+
+- useful to think of a neural network according to layers of information processing
+- every neural network has one **input** layer with nodes corresponding to each input variable (including indicators for factors)
+- every neural network has one **output** layer (often one node)
+- a neural network can have one or more **hidden** layers that reconcile patterns from the inputs that correspond to outputs
+    - guidance available on when a neural network benefits from additional hidden layers
+    - guidance available on size of hidden layer(s)
+    - in practice, one hidden layer is sufficient for a majority of problems & average of inputs & outputs is a decent starting point for size of hidden layer
+- the algorithm essentially searches for an optimal set of weights corresponding to edges between all pairs of nodes in successive layers (input >> hidden(s) >> output)
+
+
+```{r}
+require(nnet)
+mod_nnet <- nnet(suicide ~ ., data = train, size = 3)
+
+suicide_nn <- predict(mod_nnet, newdata = train, type = "class")
+
+confusion <- tally(suicide_nn ~ suicide, data = train, format = "count")
+confusion
+
+nnet_acc <- sum(diag(confusion)) / nrow(train) * 100
+nnet_acc
+```
+
+## Logistic regression model
+
+```{r}
+# logistic
+mod_logit <- glm(suicide ~ ., data = train, family = "binomial")
+msummary(mod_logit)
+
+suicide_logitProb <- predict(mod_logit, newdata = train, type = "response")
+suicide_logit <- ifelse(suicide_logitProb > 0.5, yes = "yes", "no")
+
+confusion <- tally(suicide_logit ~ suicide, data = train, format = "count")
+confusion
+
+logit_acc <- sum(diag(confusion)) / nrow(train) * 100
+logit_acc
+```
+
+
+## Aside: Support Vector Machines
+
+![image credit: James et al (2013) <http://www-bcf.usc.edu/~gareth/ISL/>](maximalMarginClassifier.png)
+
+- **Support vector machines** are another group of classification models that attempt to define a mathematical boundary between two classes
+    - **maximal margin classifier**: if possible to identify a line, or plane, (or hyperplane) that perfectly separates the two classes...
+        - we choose the boundary that maximizes separation 
+        - the (few) points that define the boundary are the so-called "support vectors", other points don't impact position of the boundary
+        - very sensitive to a few influential points
+    - **support vector classifier**: extension of MMC that permits a "soft margin" 
+        - still a line/plane/hyperplane, but a margin of "tolerance" is permitted
+        - improves robustness to individual observations
+        - support vectors are defined by any observations on the wrong side of the margin for their class (those beyond the margin still don't affect SVC)
+    - **support vector machine**: extension of SVC that permits a non-linear decision boundary methods
+- As a technical point, SVMs tend to give fairly similar results to logistic regression
+    - When classes are well-separated, SVM may be preferred
+    - In more overlapping regimes, logistic regression is often preferred
+
+
+## How have we done so far?
+
+- We need some way to compare and evaluate models (we'll formalize this in a moment)
+- Q: which model would you choose?
+- Q: how do you know which result(s) to trust? 
+
+```{r}
+# summary of results
+ModelComparison <- 
+  tribble(
+  ~model, ~accuracy, 
+  "**NULL MODEL**", mod_null[1], 
+  "decision tree", dtree_acc, 
+  "random forest", rf_acc, 
+  "k-nearest neighbors", knn_acc, 
+  "naive Bayes", nb_acc, 
+  "neural network", nnet_acc, 
+  "logistic regression", logit_acc
+)
+ModelComparison %>%
+  arrange(desc(accuracy))
+```
+
+## Ensemble methods
+
+- we have several possibly legitimate models that take a different approach to our classification problem
+- if each model has taken an independent approach, there's a clear benefit to combining them
+- e.g., if $\epsilon_i$ is the error rate of model $i$, then the chance that all 5 models misclassify a case is smaller than the error rate for any individual since $\prod_{i=1}^{k}\epsilon_i$ and $\epsilon_i < 1$ for any $i$
+    - we exclude the null model & replace the decision tree with random forest model
+    - Q: what do we achieve with different values for `vote`?
+
+
+```{r}
+vote <- 3
+
+suicide_ensemble <- 
+  ifelse((suicide_knn   == "yes") + 
+         (suicide_nn    == "yes") + 
+         (suicide_nb    == "yes") + 
+         (suicide_logit == "yes") + 
+         (mod_forest$predicted == "yes") >= vote, 
+         "yes", "no")
+
+confusion <- tally(suicide_ensemble ~ suicide, data = train, format = "count")
+confusion
+
+
+ens_acc <- sum(diag(confusion)) / nrow(train) * 100
+
+# summary of results
+ModelComparison <- 
+  tribble(
+  ~model, ~accuracy, 
+  "**NULL MODEL**", mod_null[1], 
+  "random forest", rf_acc, 
+  "k-nearest neighbors", knn_acc, 
+  "naive Bayes", nb_acc, 
+  "neural network", nnet_acc, 
+  "logistic regression", logit_acc, 
+  "**ENSEMBLE**", ens_acc
+)
+ModelComparison %>%
+  arrange(desc(accuracy))
+```
+
+
+
+## Ensemble Models
+
+- Ensemble methods are a useful way to hedge our bets
+    - recall: Random Forest itself is an ensembling of decision trees
+    - There are often lots of reasonable approaches to modeling a given data set
+    - Good option for blending several models or the same model with different settings
+    - Especially useful when models disagree (**Q: Why?**)
+- We allowed each model to have an equal "vote", but a weighted ensemble is a straight-forward extension
+- `SuperLearner` package has some nice tools to do this directly
+    - includes lots of predictive models for classification & regression
+    - also includes screening models for variable selection
+    - **important** `SuperLearner` calls other packages corresponding to the available methods, and you need to install your own package dependencies to access those methods
+
+
+```{r}
+require(SuperLearner)
+listWrappers()  # list available models in `SuperLearner`
+
+```
+
+
+<!-- Day4 -->
+
+
+## Model Evaluation
+
+![image credit: James et al (2013) <http://www-bcf.usc.edu/~gareth/ISL/>](biasVariance.png)
+
+
+
+- We have **overfit** the data if we allow our model too much flexibility to accommodate the idiosyncrasies of the training data.
+- It's an easy trap to stumble into, especially if we fail to preserve a test sample during modeling.
+- An overfitted model will perform poorly when attempting to predict results for new (i.e. test) data that the model has never seen before.
+- a few principles for evaluating models
+    - **cross-validation**
+    - **measuring prediction error**
+    - **Confusion matrices** (as we've discussed)
+    - **receiver operating characteristic (ROC) curves**
+    - **bias-variance tradeoff**
+- Lastly, we'll also mention **regularization** as a strategy to protect against overfitting in regression modeling
+
+## Cross-validation
+
+- we had partitioned our training and test data from the beginning
+- once we are satisfied with our model, we use the test set to challenge our model to predict results for observations it has not previously encountered
+- We call this "out-of-sample" testing
+- Poor performance would suggest that our model has overfit the data
+- preserving a test set from the beginning is a more pure approach, but compromises are common
+    - **50-50 cross-validation**: 
+        - Split data in half, 
+        - Use the first half to predict the second, and vice versa.  
+        - Evaluate performance.  (a.k.a. 2-fold cross-validation)
+    - **k-fold cross validation** (see `caret` package): 
+        - Split data into k equal partitions.  
+        - Use **each** of the k partitions in turn as the "test" set while other $(k - 1)$ partitions are pooled for use as training set.
+        - Aggregate the results for all of the k partitions
+
+
+## Prediction error
+
+- for quantitative responses, we have several common metrics for assessing predictive performance
+    - commonly used even when test set is not available (e.g, leave-one-out)
+    - when applying to test set
+        - 
+- Evaluate deviations between observed and predicted values
+    - RMSE: $\sqrt{\frac{1}{n}\sum(y - \hat{y})^2}$
+    - MAE: $\frac{1}{n}\sum|y - \hat{y}|$
+- Correlation: unitless scale (-1, 1) with no correlation near zero, strong positive correlation near 1 (and strong negative near -1)
+    - (most familiar) Person's product-moment correlation 
+    - (rank-based alternative) Spearman's rho
+    - (rank-based alternative) Kendall's tau  
+- $R^2$: coefficient of determination--proportion of response variability explained by the model--0 for none at all; 1 for perfect prediction
+
+
+
+## Confusion matrix
+
+- we've discussed quite a few confusion matrices while assessing model performance when classifying our training data.
+- Let's evaluate the test data...
+
+```{r}
+# k-Nearest Neighbor
+test_knn <- knn(train = train_quant, cl = train$suicide, k = 5,
+                   test = select(test, age, cesd, avgAlcohol, pss_fr))
+
+confusion <- tally(test_knn ~ suicide, data = test, format = "count")
+confusion # test data
+
+sum(diag(confusion)) / nrow(test)
+```
+
+
+#### Out of sample model comparisons 
+
+- lots of these models have different classes, but many of them have a `predict()` method associated
+
+```{r}
+# slight modification of our null model (intercept-only logit model)
+mod_null <- glm(suicide ~ 1, data = train, family = "binomial")
+
+# store our various models as a list
+models <- list(mod_null, mod_tree, mod_tree2, mod_forest, mod_nnet, mod_nb, mod_logit)
+
+# # models and various `predict()` methods available
+# lapply(models, FUN = class)
+# methods("predict")
+```
+
+
+```{r include=FALSE, echo=TRUE}
+predictions_train <- 
+  data.frame(
+    y = as.character(train$suicide), 
+    type = "train", 
+    mod_null = predict(mod_null, type = "response"), 
+    mod_tree = predict(mod_tree, type = "class"), 
+    mod_tree2 = predict(mod_tree2, type = "class"), 
+    mod_forest = predict(mod_forest, type = "class"), 
+    mod_nnet = predict(mod_nnet, type = "class"), 
+    mod_nb = predict(mod_nb, newdata = train, type = "class"),
+    mod_logit = predict(mod_logit, type = "response")) 
+
+predictions_test <- 
+  data.frame(
+    y = as.character(test$suicide), 
+    type = "test", 
+    mod_null = predict(mod_null, newdata = test, type = "response"), 
+    mod_tree = predict(mod_tree, newdata = test, type = "class"), 
+    mod_tree2 = predict(mod_tree2, newdata = test, type = "class"), 
+    mod_forest = predict(mod_forest, newdata = test, type = "class"), 
+    mod_nnet = predict(mod_nnet, newdata = test, type = "class"), 
+    mod_nb = predict(mod_nb, newdata = test, type = "class"),
+    mod_logit = predict(mod_logit, newdata = test, type = "response")) 
+
+predictions <- bind_rows(predictions_train, predictions_test)
+
+# inspect progress (model results)
+glimpse(predictions)
+
+# clean up null & logit models
+predictions_tidy <- 
+  predictions %>%
+  mutate(mod_null = ifelse(mod_null < 0.5, "no", "yes"), 
+         mod_logit = ifelse(mod_logit < 0.5, "no", "yes")) %>%
+  gather(key = "model", value = "y_hat", -type, -y)
+
+# inspect progress (stacked models)
+glimpse(predictions_tidy)
+
+# tabulate
+predictions_summary <- 
+  predictions_tidy %>%
+  group_by(model, type) %>%
+  summarise(N = n(), 
+            correct = sum(y == y_hat, 0), 
+            positives = sum(y == "yes"), 
+            true_pos = sum(y_hat == "yes" & y == y_hat), 
+            false_pos = sum(y_hat == "yes" & y != y_hat)) 
+
+# inspect progress (stacked models)
+glimpse(predictions_summary)
+
+predictions_summary <- 
+  predictions_summary %>%
+  mutate(accuracy = correct / N * 100, 
+         tpr = true_pos / positives, 
+         fpr = false_pos / (N - positives)) %>%
+  ungroup() %>%
+  gather(val_type, val, -model, -type) %>%
+  unite(temp1, type, val_type, sep = "_") %>%
+  spread(temp1, val) %>%
+  arrange(desc(test_accuracy)) %>%
+  select(model, train_accuracy, test_accuracy, test_tpr, test_fpr)
+
+predictions_summary %>%
+  select(model, train_accuracy, test_accuracy) %>%
+  arrange(desc(train_accuracy))
+```
+
+
+
+
+## Receiver operating characteristic (ROC) curves
+
+![from MDSR Figure 8.6 (p. 191)](exampleROC.png)
+
+- We've mostly focused on classifications in the context of the actual response (`suicide`: {"yes", "no"})
+- probability associated with each classification is also of value
+- ROC curves graphically display the trade-off between true-positive and false-positive classifications
+- Q: How have we done overall?
+- Q: What would "ideal" look like?
+
+## Receiver operating characteristic (ROC) curves
+
+- The figure shows predictions of a binary classifier model (e.g., "Yes" or "No" outcome)
+- Q: In the context of our `HELPrct` example, what do the two distributions represent?
+- Q: when is the "ideal" achieved?
+
+
+![image credit (2/13/2019): <https://en.wikipedia.org/wiki/Receiver_operating_characteristic>](explainROC.png)
+
+## Receiver operating characteristic (ROC) curves
+
+- Q: How did our models do?
+- Q: Which one seems to be the best
+
+```{r}
+require(ROCR)
+
+# output arguments corresponding to objects in `model` list
+outputs <- c("response", "prob", "prob", "prob", "raw", "raw", "response")
+roc_test <- mapply(FUN = predict, models, type = outputs, MoreArgs = list(newdata = test)) %>%
+  as.data.frame() %>%
+  select(1, 3, 5, 7, 8, 10, 11)
+
+names(roc_test) <- c("mod_null", "mod_tree", "mod_tree2", "mod_forest", "mod_nnet", "mod_nb", "mod_logit")
+
+glimpse(roc_test)
+
+roc_tidy <- 
+  roc_test %>%
+  gather(key = "model", value = "y_hat") %>%
+  group_by(model) %>%
+  dplyr::do(get_roc(., y = test$suicide))
+
+# plot ROC curves
+roc_tidy %>%
+  ggplot(aes(x = fpr, y = tpr)) + 
+  geom_line(aes(color = model)) + 
+  geom_abline(intercept = 0, slope = 1, lty = 3) + 
+  ylab("True positive rate (sensitivity)") + 
+  xlab("False positive rate (1 - specificity)") + 
+  geom_point(data = predictions_summary, size = 3, 
+             aes(x = test_fpr, y = test_tpr, color = model))
+```
+
+
+
+
+
+## Bias-variance tradeoff
+
+![image credit: James et al (2013) <http://www-bcf.usc.edu/~gareth/ISL/>](biasVariance.png)
+
+For a given test value, $x_0$:
+
+$$E(y_0 - \hat{f}(x_0))^2 = \text{Var}(\hat{f}(x_0)) + [\text{Bias}(\hat{f}(x_0))]^2 + \text{Var}(\epsilon)$$
+
+- The expected variability of the **test set predictions** is a sum of three quantities
+    - Randomness (from nature; our so-called error term)
+    - Bias (from under-fitting the data)
+    - Variance (from over-fitting the data)
+- Consider the figure above.  The Black cubic curve is the true relationship between Y and X used to generate the data.
+- **Bias** here refers to the a consistent tendency of a statistical model to over- or under-estimate true population parameters (i.e. the nature of the process that generated the data).  In the figure, 
+    - The Orange linear model is highly biased because--roughly speaking--the model
+        - consistently over-estimates Y when X is between 0 and 40
+        - then consistently underestimates Y for X between 40 and 70
+        - and then overestimates Y again for X greater than 70
+    - In short, the linear model fails to properly reflect the relationship (i.e., conditional expectation) between the response (Y) and the explanatory variables (X's).  As a result, some of the structural relationship between Y and X's is incorrectly treated like randomness.
+    - The Green model tends to closely follow the data, so it has lower bias
+    - In the green wiggly model tends to closely follow the  
+- **Variance** here refers to how much our model would change if we had estimated it with a different training set.  In the figure, 
+    - The Green wiggly model follows the observations too closely
+        - If one (or a few) training observations were changed, we expect a substantial impact on the model 
+    - The Orange model would not change much if one or a few training observations were changed, so it has lower variance
+
+
+
+
+## Regularization/Shrinkage (Ridge Regression & Lasso)
+
+- **Goal**: sacrifice a small amount of bias to decrease variance
+    - Especially useful when number of explanatory variables is large (perhaps larger than n!) and/or when parameter estimates have high variance
+- **Method**: impose a constraint that intentionally biases parameter estimates (e.g. slopes in regression) toward zero in order to reduce variance
+- recall: in Regression we fit our model by optimizing some distance metric (e.g., sum of squared errors--SSE)
+- regularization/shrinkage methods simply modify the quantity that we optimize 
+    - Ridge regression: minimize $\text{SSE} + \lambda \sum_{j = 1}^p \beta_j^2$
+    - Lasso: minimize $\text{SSE} + \lambda \sum_{j = 1}^p | \beta_j |$
+- important difference: 
+    - Ridge regression model includes all parameters, so there is no variable selection
+    - Lasso has built-in variable selection by forcing some of the $\beta_j$'s to be exactly zero
+- **Tuning parameter**: $\lambda$ 
+    - when the tuning parameter $\lambda$ is zero, the result is the usual least squares regression model
+    - when the tuning parameter $\lambda$ is very large, the result is a null model (intercept only)
+    - proper selection is important
+    - cross-validation is a popular method for setting lambda (e.g. leave-one-out)
+- R function: `glmnet::glmnet()`
+    - function argument `alpha = 0` for ridge regression
+    - function argument `alpha = 1` for Lasso
+    - fits linear, logistic, and other regression models
+
+
+## Regularization/Shrinkage (Ridge Regression & Lasso)
+
+- Q: What do you note about comparison of *coefficient estimates* (with logistic model)?
+
+
+```{r}
+require(glmnet)
+
+train_matrix <- 
+  train_quant %>%
+  mutate(male = ifelse(train$sex == "male", 1, 0)) %>%
+  as.matrix()
+
+# fit model
+mod_lasso <- glmnet(x = train_matrix, y = train$suicide, family = "binomial", alpha = 1)  
+
+# plot coefficients as a function of "penalty" imposed by tuning parameter
+plot(mod_lasso)
+
+# choosing lambda
+cv_result <- cv.glmnet(x = as.matrix(train_quant), y = train$suicide, family = "binomial", type.measure = "class")
+plot(cv_result)
+
+best_lambda <- cv_result$lambda.min
+
+
+# lasso coefficient estimates (note shrinkage; sex/female variable dropped)
+predict(mod_lasso, type = "coefficients", s = best_lambda)
+
+# logistic regression coefficient estimates
+msummary(mod_logit)
+
+```
+
+## Regularization/Shrinkage (Ridge Regression & Lasso)
+
+- Q: What do you note about comparison of *training accuracy* (with logistic model)?
+
+
+```{r}
+
+# training accuracy
+suicide_lassoProb <- predict(mod_lasso, s = best_lambda, newx = train_matrix, type = "response")
+
+suicide_lasso <- ifelse(suicide_lassoProb > 0.5, yes = "yes", "no")
+
+confusion <- tally(suicide_lasso ~ suicide, data = train, format = "count")
+confusion
+
+lasso_acc <- sum(diag(confusion)) / nrow(train) * 100
+
+# Logistic regression training accuracy with/without regularization
+lasso_acc  # Regularization (Lasso)
+logit_acc  # No regularization
+```
+
+
+
+
+<!-- ## How well did the logistic model classify suicide risk? -->
+
+<!-- - recall our method to construct a systematic grid approximating all possible outcomes in the data -->
+<!-- - use our model to predict the result for each combination of X's -->
+<!--     - `modelr::data_grid()` is convenient to build the grid -->
+<!--     - `modelr::add_predictions()` -->
+
+<!-- ```{r} -->
+<!-- # set grid resolution for each variable -->
+<!-- res <- 30 -->
+
+<!-- # make the grid -->
+<!-- fake_grid <- -->
+<!--   train %>% -->
+<!--   data_grid( -->
+<!--     age = seq_range(age, n = res), -->
+<!--     cesd = seq_range(cesd, n = res), -->
+<!--     sex, -->
+<!--     avgAlcohol = seq_range(avgAlcohol, n = res), -->
+<!--     pss_fr = seq_range(pss_fr, n = res) -->
+<!--   ) -->
+
+<!-- nrow(fake_grid)  # this gets big fast depending on `res`... -->
+<!-- ``` -->
+
+<!-- ### add predictions -->
+
+<!-- ```{r} -->
+<!-- y_hats <- -->
+<!--   fake_grid %>% -->
+<!--   mutate(y_hat = predict(mod_logit, newdata = ., type = "response")) -->
+
+<!-- # confusion matrix -->
+<!-- tally(train ~ y_hats) -->
+<!-- ``` -->
+
+
+

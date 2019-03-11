@@ -1,0 +1,804 @@
+---
+title: "MDSR Ch 5: Tidy data and iteration"
+output: 
+  slidy_presentation: default
+  html_notebook: default
+---
+
+
+```{r Front Matter, echo=TRUE, message=FALSE, warning=FALSE, include=FALSE}
+# global options
+knitr::opts_chunk$set(eval=FALSE, include=TRUE)
+
+# clean up R environment
+rm(list = ls())
+
+# load all packages here
+library(mdsr)
+library(tidyverse)
+library(nycflights13)
+library(Lahman)
+library(rvest)
+library(readr)
+library(lubridate)
+
+
+# user-defined functions here (if any)
+### `hr_leader(x)` calculates team with most HR's for a given league and year
+
+
+# inputs (e.g. data) summary
+data("Teams")      # from Lahman
+data("flights")    # from nycflights13
+### `UK reactors` scraped from wikipedia
+
+```
+
+
+## Agenda
+
+- Data structures
+    - vectors, lists, data frame, tibble, etc
+- Iteration
+    - `for` loop
+    - vectorize with `apply` family
+    - (aside): User-defined functions
+    - `dplyr::do()`
+    - `mosaic::do()`
+- Data intake
+- Dates & Times
+
+#### Announcements
+
+- Office hours posted in Syllabus
+- There are a few more changes to watch for in Ch 5 (see below)
+- Keep up with Piazza
+- Canvas assignments 
+    - MDSR Chap 3 Exercises
+    - Programming Notebooks: MDSR Chapter 05
+
+
+#### MDSR 05 Programming Notebook Tips/Errata
+
+- MDSR Chapter 5 includes several user-defined functions, make sure they are **noted** in the front-matter
+    - in other assignments (hwk, projects, etc), user-defined functions should be defined at the beginning per the Style Guide
+    - **Since this style is awkward to do so in programming notebooks, so a comment/note in the front-matter is sufficient for user-defined functions and data sources.**
+- p. 91: if `hiv_key` fails, try this one: `hiv_key <- "14nH2oKdgDMlgjtLsYM98kxyVMVa5XTkUUkuF0ZrIDgM"`
+- p. 94: you may need to load `babynames` from the `babynames` package (although the book doesn't)
+- No programming required 
+    - p. 99 `BP_wide` (but do not skip the `help(HELPrct)` on p. 98 & Figure 5.2)
+    - Section 5.2.1 (include section heading as placeholder)
+    - Section 5.2.2 (include section heading as placeholder) 
+    - Section 5.2.3 (include section heading as placeholder)
+    - Section 5.3   (include section heading as placeholder)
+    - Section 5.5.2 (include section heading as placeholder) 
+    - Section 5.6 (include section heading as placeholder, also note all the great packages for accessing cool data sources!)
+- p. 115: rename the variable in `bstrap` as "mean" after your simulation
+- p. 127: some variable names from the Wikipedia table have changed, you'll need to correct them
+- p. 127-128: Fig 5.10 is close but not identical due to new Wikipedia data (e.g. reactor shut downs)
+
+
+
+
+## Section 5.1 through 5.3
+
+- We discussed principles of *tidy data* last week
+    1. The rows--called *cases* or observational units--each refer to a specific, unique, and similar sort of thing
+    2. The columns, called *variables*, each have the same sort of value recorded for each case (i.e. row)
+- "Tidy" is not necessarily a singular form for a given data set... 
+    - judgement of tidy or not depends on the research question & corresponding definition of "case"
+    - data can be converted from one tidy form to another 
+    - However, many forms are objectively **NOT** tidy with respect to any research question
+- Sec 5.2 discusses reshaping data with `spread()` and `gather()`
+- Sec 5.3 Naming conventions & style guides
+
+
+
+## Data structures in R
+
+- R data structures can be organized by 
+    - dimensionality (1d, 2d, nd) 
+    - tolerance for heterogeneous contents (i.e. contents can be different types or not)
+- Five common data types
+
+|    | Homogeneous   | Heterogeneous |
+|:---|:--------------|:--------------|
+| 1d | Atomic vector | List          | 
+| 2d | Matrix        | Data frame    |
+| nd | Array         |               |
+
+## Atomic vectors
+
+- 1d, homogenous
+- usually created with `c()`, short for "combine"
+- several types
+    - character (e.g., `chr_var <- c("some text", "more stuff", "17")`)
+    - double (e.g., `dbl_var <- c(1, 2.5, 4.5)`)--often called "numeric"
+    - integer (e.g., `int_var <- c(1L, 6L, 10L)`)--Note L suffix for integer rather than double
+    - logical (e.g., `log_var <- c(TRUE, FALSE, T, F)`)
+- mixed types results in default coercion to most flexible type present
+- `as.numeric()` and other analogous "`as.[type]`" functions can force explicit coercion
+- commonly use single square bracket to access element(s) of an atomic vector: `[`
+
+```{r eval=TRUE}
+# mixed types coerce by default
+logical_01 <- c(TRUE, FALSE, T, F, 1, "0")
+class(logical_01)
+
+# explicit coercion
+as.logical(logical_01)
+
+# access an element
+logical_01[3]
+```
+
+
+## List
+
+- 1d, heterogenous
+- elements can be of any type, including lists
+- you can turn a list into an atomic vector with `unlist()` following same coercion rules as `c()`
+- lists are used to build up many of the more complicated data structures like data frames & model objects
+- commonly use {`[`, `[[`, `$`} to access element(s) of a list
+    - `[` preserves result as a list, and can access multiple elements
+    - `[[` simplifies resulting object (e.g., to vector or data frame)
+    - `listName$var` shorthand for `listName[["var"]]`
+
+```{r}
+# define a model object
+model <- lm(mpg ~ wt, data = mtcars)
+
+# is it a list (yes)
+is.list(model)
+
+# inspect the data structure
+str(model)
+
+# accesses "residuals" from list & simplifies result to a numeric atomic vector
+class(model$residuals)
+```
+
+
+## Data frames
+
+- most common way of storing data in R
+- under the hood, a data frame is a list of equal-length vectors
+- result is a 2d structure that shares properties with both the matrix and the list
+    - access element(s) with `[` by specifying row and column location
+    - access and simplify column to vector with `$` (or `[[`)
+
+#### Tibbles (vs. data frame)
+
+- essential part of `tidyverse`
+- a tibble is sort of a lazy version of the data.frame
+    - it doesn't change the types of inputs (i.e. doesn't convert strings to factors...)
+    - it permits use of the back-tick ( ` ) as a workaround for "illegal" names
+- the terms (and structures) can often be used interchangeably
+- Two differences: 
+    - Printing... tibbles just print the first ten rows by default (like a built in `head()` feature)
+    - Subsetting... tibbles don't do partial matching & there's an extra step for use of `[`, `$`, or `[[`
+
+
+## Why the tangent about data structures?  
+
+- consider the `Teams` data from the `Lahman` package
+- inspect the data first
+    - search the help (`?Teams`)
+    - review the structure `str(Teams)`, `head(Teams)`, `tail(Teams)`, etc
+    - What's a case?
+    - What's a variable?
+
+```{r eval=FALSE, include=TRUE}
+# package
+require(Lahman)
+
+# bring into R environment
+data("Teams")
+
+# inspect the data s
+?Teams      # this only works because it came from an R package... 
+str(Teams)
+```
+
+
+## Comparison of team performance metrics
+
+- Research questions
+    - How similar are MLB teams with respect to these metrics?
+    - Do some metrics widely vary among MLB teams?
+- How to approach the problem?
+
+## Bad idea
+
+- calculate the standard deviation for each variable...
+- functional but pretty silly
+
+```{r eval=FALSE, include=TRUE}
+
+sd(Teams$R, na.rm = TRUE)
+sd(Teams$AB, na.rm = TRUE)
+sd(Teams$H, na.rm = TRUE)
+sd(Teams$X2B, na.rm = TRUE)
+sd(Teams$X3B, na.rm = TRUE)
+sd(Teams$HR, na.rm = TRUE)
+sd(Teams$BB, na.rm = TRUE)
+sd(Teams$SO, na.rm = TRUE)
+sd(Teams$SB, na.rm = TRUE)
+sd(Teams$CS, na.rm = TRUE)
+sd(Teams$HBP, na.rm = TRUE)
+sd(Teams$SF, na.rm = TRUE)
+sd(Teams$RA, na.rm = TRUE)
+sd(Teams$ER, na.rm = TRUE)
+sd(Teams$ERA, na.rm = TRUE)
+sd(Teams$CG, na.rm = TRUE)
+sd(Teams$SHO, na.rm = TRUE)
+sd(Teams$SV, na.rm = TRUE)
+sd(Teams$IPouts, na.rm = TRUE)
+sd(Teams$HA, na.rm = TRUE)
+sd(Teams$HRA, na.rm = TRUE)
+sd(Teams$BBA, na.rm = TRUE)
+sd(Teams$SOA, na.rm = TRUE)
+sd(Teams$E, na.rm = TRUE)
+sd(Teams$DP, na.rm = TRUE)
+sd(Teams$FP, na.rm = TRUE)
+
+# and so on...
+
+```
+
+## Better idea
+
+- we're just doing the same operation **for** each column in sequence
+- `for` loop?
+    - algorithmic solution
+    - easy to follow intuition
+    - more flexible inputs
+
+
+```{r eval=FALSE, include=TRUE}
+# we're interested summarizing several performance metrics in cols 15:40
+stDev <- NULL
+
+# simple loop to calculate some averages across specified columns (by index)
+for (i in 15:40) {
+  stDev[i - 14] <- sd(Teams[, i], na.rm = TRUE)
+}
+
+# names(stDev) <- names(Teams)[15:40]
+
+stDev
+```
+
+## Vectorized operations
+
+- It's important to understand that the fundamental architecture of R is based on *vectors*
+- general-purpose languages like C++ & python distinguish between single items (e.g. strings & integers) and arrays of those items
+- in R, a "string" is just a character vector of length 1
+- for this reason, R is optimized for vectorized operations 
+- this provides an effient alternative to loop-like operations
+
+## `apply()` family
+
+- popular functions designed to vectorize such operations
+- `apply(X, MARGIN, FUN, ...)`
+    - `X`: the data
+    - `MARGIN`: rows, columns, or element-wise
+    - `FUN`: **any** function you want (including user-defined functions) 
+    - `...`: allows you to pass arguments to FUN
+- `lapply(X, FUN, ...)` 
+    - **returns a list** of the same length as X, 
+    - each element is the result of applying FUN to the corresponding element of X
+- `sapply(X, FUN, ..., simplify = TRUE, USE.NAMES = TRUE)`: 
+    - sapply is a user-friendly version of lapply
+    - **returns a vector** (or matrix) rather than list
+- `vapply()`, `tapply()`, `mapply()`, etc.
+
+```{r eval=FALSE, include=TRUE}
+Teams %>%
+  select(15:40) %>%
+  apply(MARGIN = 2, FUN = mean, na.rm = TRUE)
+```
+
+---
+
+## Another Sidebar (user-defined functions)
+
+![](xkcd_general problem.png)
+
+- When? consider writing a function whenever you’ve copied and pasted a block of code more than twice (i.e. you now have three copies of the same code). 
+    - Example: we want to rescale some data so the result is between 0 and 1 
+    - Here's some code (...including a common error): 
+
+```{r eval=TRUE}
+# some simulated data
+df <- tibble::tibble(
+  a = rnorm(10),
+  b = rnorm(10),
+  c = rnorm(10),
+  d = rnorm(10)
+)
+```
+
+
+```{r}
+# rescale each variable so the result is between 0 and 1 
+df$a <- 
+  (df$a - min(df$a, na.rm = TRUE)) / 
+  (max(df$a, na.rm = TRUE) - min(df$a, na.rm = TRUE))
+df$b <- (df$b - min(df$b, na.rm = TRUE)) / 
+  (max(df$b, na.rm = TRUE) - min(df$a, na.rm = TRUE))
+df$c <- (df$c - min(df$c, na.rm = TRUE)) / 
+  (max(df$c, na.rm = TRUE) - min(df$c, na.rm = TRUE))
+df$d <- (df$d - min(df$d, na.rm = TRUE)) / 
+  (max(df$d, na.rm = TRUE) - min(df$d, na.rm = TRUE))
+```
+
+
+## Identify Inputs 
+
+- first inspect the code... How many inputs does it have?
+
+```{r eval=TRUE}
+(df$a - min(df$a, na.rm = TRUE)) /
+  (max(df$a, na.rm = TRUE) - min(df$a, na.rm = TRUE))
+```
+
+
+
+## Generalize inputs
+
+- now input is a generic vector, `x`
+
+```{r eval=TRUE}
+x <- df$a
+
+(x - min(x, na.rm = TRUE)) /
+  (max(x, na.rm = TRUE) - min(x, na.rm = TRUE))
+```
+
+## Clean up
+
+- note that we utilize a range 3 different times... we can just do that once to clean things up
+- is this code easier to read?
+
+```{r eval=TRUE}
+x <- df$a
+rng <- range(x, na.rm = TRUE)
+
+(x - rng[1]) / (rng[2] - rng[1])
+```
+
+## Turn it into a function
+
+- So far, we identified the need for a function, and then 
+    - identified inputs,
+    - cleaned up code, and 
+    - **checked that it still works!**
+- Now let's turn it into a function
+
+```{r}
+rescale01 <- function(x) {
+  rng <- range(x, na.rm = TRUE)
+  (x - rng[1]) / (rng[2] - rng[1])
+}
+```
+
+- Good idea to make notes for yourself
+```{r eval=TRUE}
+rescale01 <- function(x) {
+  # purpose: rescale a vector so the result is between 0 and 1
+  # inputs:
+  ### x: a quantitative vector
+  # outputs: 
+  ### result between 0 and 1 for each element after rescaling
+
+  rng <- range(x, na.rm = TRUE)
+  (x - rng[1]) / (rng[2] - rng[1])
+}
+```
+
+- use simple data with known result to check that it works
+
+```{r eval=TRUE}
+rescale01(c(0, 5, 10))
+```
+
+- live ammo
+
+```{r eval=TRUE}
+rescale01(df$a)
+rescale01(df$b)
+rescale01(df$c)
+rescale01(df$d)
+```
+
+- right, we can vectorize **any** function!
+
+```{r eval=TRUE}
+apply(X = df, MARGIN = 2, FUN = rescale01)
+```
+
+
+## Recap: Writing a new function
+
+- There are three key parts when writing a new function:
+    - You need to name the function. (in order--1. informative; 2. concise)
+    - List the inputs, or arguments, to the function.
+    - Write code for the body of the function
+
+- Note the overall process actually happens in reverse... 
+    - I only made the function *after* I figured out how to make it work with a simple input. 
+    - It’s easier to start with working code and turn it into a function; **it’s MUCH harder to create a function and then try to make it work.**
+
+
+
+## `dplyr::do()` 
+
+- general purpose complement `filter()`, `select()`, `mutate()`, `summarise()` and `arrange()`
+- apply arbitrary function to *groups* of data
+    - return either a data frame or arbitrary objects which will be stored in a list. 
+    - Particularly useful when working with models by group
+
+## `dplyr::do()` Home Run Leaders Example
+
+- We're interested in identifying the baseball team in each season that led their league in home runs
+    - a home run (HR) is when a baseball player hits the ball over the opposing team and out of play
+    - the result is one or more automatic points for the team that hit the home run
+    - Major League Baseball teams are organized into two "leagues"
+        - American League (AL)
+        - National League (NL)
+- *Goal: write an R function that identifies the team with the most HR's for each league, in each year*
+    - Suggest some pseudo code to accomplish this for a specific league (AL) and year (2015)
+
+## Home Run Leaders: trial run
+
+- Let's do a trial run first to make sure we have the body of the code working as intended...
+
+```{r eval=TRUE}
+require(Lahman)
+data("Teams") 
+Teams <- 
+  as_tibble(Teams) %>% 
+  mutate(lgID = as.character(lgID))
+
+# trial run of the operation
+Teams %>%
+  filter(yearID == 2015, lgID == "AL") %>%
+  select(yearID, lgID, teamID, HR) %>%
+  arrange(desc(HR)) %>%
+  head(1)  
+```
+
+## Home Run Leaders: write the function
+
+- *Goal: write an R function that identifies the team with the most HR's for each league, in each year*
+    - we'll want to `group_by(lgID, yearID)`
+    - then perform our calculation on each group
+    - `dplyr::do()` is good at that
+    - we need a function that takes an arbitrary combination of `lgID` and `yearID` and returns the HR leader for that group
+
+```{r eval=TRUE}
+hr_leader <- function(x) {
+  # return team with the most home runs given year and league
+  ### x: a subset of Teams for a single year and league
+  x %>%
+    select(yearID, lgID, teamID, HR) %>%
+    arrange(desc(HR)) %>%
+    head(n = 1)
+}
+```
+
+
+## Home Run Leaders: test the function
+
+- Make sure the function matches our previous result for the American League in 2015
+
+```{r}
+Teams %>%
+  filter(yearID == 2015, lgID == "AL") %>%
+  dplyr::do(hr_leader(.))
+```
+
+
+
+## Home Run Leaders: test the function
+
+- All combinations of `lgID` and `yearID`
+- We'll store the results this time for later use
+
+```{r}
+HrLeaders <- 
+  Teams %>%
+  group_by(yearID, lgID) %>%
+  dplyr::do(hr_leader(.))
+
+HrLeaders %>%
+  arrange(desc(yearID)) %>%
+  head()
+```
+
+## Home Run Leaders: league comparison 
+
+- maybe we want to compare the average and maximum among top teams for each league 
+- we can `group_by(lgID)` and `summarise()`
+
+```{r}
+HrLeaders %>%
+  group_by(lgID) %>%
+  summarise(seasons = n(), 
+            average = mean(HR, na.rm = TRUE), 
+            maximum = max(HR, na.rm = TRUE))
+```
+
+## Home Run Leaders: league comparison
+
+- `mosaic` package has some great tools for this and other purposes
+- `mosaic` prioritizes the idiom: `function(Y ~ X, data = DATASET)
+- `mosaic::favstats()` as an alternative to `summary()`
+
+```{r}
+require(mosaic)
+favstats(HR ~ lgID, data = HrLeaders)  # additional grouping variables are easy to include
+```
+
+```{r eval=FALSE, include=TRUE}
+# base R
+summary(HrLeaders)
+summary(HrLeaders$HR ~ HrLeaders$lgID)
+
+# apply family can help
+tapply(X = HrLeaders$HR, INDEX = HrLeaders$lgID, FUN = summary)
+
+# additional grouping variables take more effort to include...
+
+# Teams %>%
+#   filter(lgID %in% c("AL", "NL"), yearID > 2010) %>%
+```
+
+
+## Home Run Leaders: league comparison plot
+
+```{r}
+HrLeaders %>%
+  filter(yearID >= 1920) %>%   
+  ggplot(aes(x = yearID, y = HR, color = lgID)) + 
+  geom_line() + 
+  geom_smooth(se = 0) + 
+  geom_vline(xintercept = 1973) + 
+  annotate(geom = "text", x = 1974, y = 25, label = "AL adopts designated hitter rule", hjust = "left") + 
+  xlab("Year") + 
+  ylab("Most Home Runs by a Single Team") + 
+  ggtitle("Comparison of top home run performance by league and year")
+```
+
+
+
+## How large is difference between NL and AL home run production?
+
+- **Goal: How large is the difference in HR production between leagues since DH rule change?**
+    - The American League made a rule change to allow designated hitters in 1973. 
+    - How might we approach the problem?  (what model assumptions are required of our data?)
+
+
+## How large is difference between NL and AL home run production?
+
+- if we use a nonparametric bootstrap we can be less concerned with Normality, but should pay attention to independence
+- one way to handle the independence issue is to average over years for each team.  
+    - That's a pretty crude approach, but it isn't unreasonable
+
+```{r}
+HrProduction <- 
+  Teams %>%
+  filter(yearID >= 1973) %>%
+  select(yearID, lgID, HR) %>%
+  group_by(yearID, lgID) %>%  
+  summarise(avgHR = mean(HR)) 
+
+LeagueDiffAvgHR <- 
+  HrProduction %>%
+  spread(key = lgID, value = avgHR) %>%
+  mutate(hrAvgDiff = AL - NL)
+
+```
+
+## How large is difference between NL and AL home run production?
+
+
+```{r}
+
+p <- 
+  LeagueDiffAvgHR %>%
+  ggplot(aes(x = hrAvgDiff)) + 
+  geom_density() + 
+  xlim(-20, 50) + 
+  xlab("Difference in average home run production since 1984 (AL - NL)")
+p
+
+favstats(~ hrAvgDiff, data = LeagueDiffAvgHR)
+```
+
+
+---
+
+
+## Bootstrapping with `mosaic::do()`
+
+- on average, AL teams hit about 16.5 more home runs per year than NL teams
+    - need to estimate the uncertainty of our estimate
+    - desired result is an *interval estimate* (e.g. confidence interval)
+- bootstrapping
+    - `LeagueDiffAvgHR` data has 44 observations
+    - we want to estimate the variability of the mean difference
+    - we sample WITH replacement from our 44 observations
+    - we'll use our distribution of bootstrap means to estimate a confidence interval
+
+```{r}
+# resampling with replacement (10k bootstrap samples)
+bootstrap <- 
+  mosaic::do(750) * mean(~ hrAvgDiff, data = resample(LeagueDiffAvgHR))
+head(bootstrap)
+
+# 94% confidence interval--using mosaic::qdata()
+civals <- qdata(~ mean, p = c(0.03, 0.97), data = bootstrap)
+civals
+```
+
+## Bootstrap distribution
+
+```{r}
+bootstrap %>%
+  ggplot() + 
+  geom_histogram(aes(x = mean)) + 
+  geom_vline(data = civals, aes(xintercept = quantile), color = "red", linetype = 3) + 
+  xlab("Bootstrap mean difference in average home run production since 1973 (AL - NL)")
+  
+```
+
+
+## Data intake
+
+#### R can read data in lots of different formats...
+
+- R's native file format is ".Rda"
+    - `save()` & `load()` commands
+    - Note MDSR "pro tip" about separation of cleaning and analysis (p. 116)
+- CSV 
+    - loads of functions read CSVs
+    - `read_csv()` from the `readr` package is a good one
+    - `fread()` from the `data.table` package is a good one (and fast)
+- Other delimiters: `read_delim()` from the `readr` package 
+- software specific formats 
+    - Minitab, SAS, SPSS, Weka, ...
+- Excel & Google Sheets
+- Web (e.g. HTML, XML, JSON)
+- API's (application programming interface)
+
+#### some cool packages for data intake
+
+- `foreign`: tools to read data from other software 
+- `feather`: for storing data frames that can be read and written by BOTH R and Python
+- `twitteR`: twitter API
+- `aRxiv`: arXiv API
+- `Rfacebook`: facebook API
+- `instaR`: instagram API
+- `Rflickr`: flickr API (not found?)
+- `tumblR`: tumblr API
+- `Rlinkedin`: LinkedIn API
+- `RSocrata`: API for querying NYC Open Data platform (among other things)
+
+
+
+## Dates & Times
+
+- Common classes 
+    - "date" 
+    - "time" within a day
+    - "date-time" (i.e. <dttm>) is an instant in time to nearest second (usually)
+- Seems like they should be simple, but can get surprisingly complicated if you are being precise
+    - **what are some examples?**
+- `lubridate` package has some excellent tools to help
+    - `today()` and `now()` come in handy for various reasons
+    - parse character strings as dates
+    - managing individual date/time components (e.g., "day", "hour")
+    - working with existing date/time objects
+
+```{r eval=TRUE}
+require(lubridate)
+
+today()
+now()
+```
+
+## Strings as dates (`lubridate`)
+
+```{r eval=TRUE}
+# functions that parse dates as strings
+ymd("2008-06-27")
+mdy("May 15th, 2008")
+mdy("5/15/2019")
+dmy("31-Jan-2017")
+
+# date-time
+ymd_hms("2017-01-31 20:11:59")
+```
+
+## Date/time components (`lubridate`)
+
+- combine individual elements
+    - `make_date()`
+    - `make_datetime()`
+
+```{r}
+require(nycflights13)
+data(flights)
+
+# construct datetime of departure
+flights %>% 
+  select(year, month, day, hour, minute) %>%
+  mutate(departure = make_datetime(year, month, day, hour, minute)) %>%
+  head(3)
+```
+
+## Extracting components of dates
+
+```{r eval=TRUE}
+dt <- ymd_hms("2016-07-08 12:34:56")
+
+year(dt)
+month(dt)
+mday(dt)
+
+yday(dt)
+wday(dt)
+```
+
+
+## Example: UK Nuclear Reactors
+
+- Data Intake (web)
+- Manage data structures (list to data frame)
+- date handling (investigate failures)
+
+```{r}
+URL <- "http://en.Wikipedia.org/wiki/List_of_nuclear_reactors"
+
+# scrape all tables from page
+tableList <- 
+  read_html(URL) %>%
+  html_nodes(css = "table")
+
+# locate US table by identifying a famous nuclear reactor
+relevantTables <- tableList[grep("Oldbury", tableList)]
+
+# parse html into a data frame
+reactorsRaw <- html_table(relevantTables[[1]], fill = TRUE)
+
+# first pass clean up
+names(reactorsRaw)[c(3, 4, 6, 7)] <- c("Reactor Type", "Reactor Model", "Capacity Net", "Capacity Gross")
+reactors <- reactorsRaw[-1, ]
+```
+
+```{r}
+# additional clean up
+reactors <- 
+  reactors %>%
+  rename(capacity_net = `Capacity Net`, capacity_gross = `Capacity Gross`) %>%
+  mutate(plantstatus = ifelse(grepl("Shut down", reactors$Status), 
+                              "Shut down", "Not formally shut down"), 
+         capacity_net = parse_number(capacity_net), 
+         construct_date = dmy(`Construction start`), 
+         operation_date = dmy(`Commercial operation`), 
+         closure_date = dmy(Closure))
+```
+
+```{r}
+reactors %>%
+  ggplot(aes(x = operation_date, y = capacity_net, color = plantstatus)) + 
+  geom_point() + 
+  # geom_smooth() + 
+  xlab("Operational date") + 
+  ylab("Net plant capacity (MW)")
+```
+
+
+
